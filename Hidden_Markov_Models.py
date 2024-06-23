@@ -12,7 +12,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 
+"""
+This code implements a Markov chain, the forward and 
+backward pass, Baum-Welch and Viterbi algorithms. 
+No HMM-specific libraries were used in this case.
+The task was to create a model to calculate the likelihood
+of a sequence given its GC content.
 
+"""
 
 os.chdir("~/Documents/Cambridge/Michaelmas/GenomeSequenceAnalysis") #change wd
 
