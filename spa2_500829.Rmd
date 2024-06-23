@@ -1,0 +1,825 @@
+---
+title: "spa2_500829"
+author: '500829'
+date: "2023-10-30"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+fig_caption: yes
+---
+
+```{r setup, include=FALSE, cache = TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Methods
+
+Our goal was to simulate a ping pong game given probabilities for each player.
+We define A1 and A2 to be the probabilities that Player 1 or Player 2 will score an ace, or win a point when serving, respectively.
+We define P1 and P1 to be the probabilities of Player 1 and Player 2 to win a regular point.
+We define s to be the number of rounds after which the server changes. 
+We define t the minimum number of points a player has to reach to win a point. A game ends when t points have been reached by either of the players and the point difference between the two is at least 2 points. If the second condition is not met when one player reaches t points, the game continues until the second condition is satisfied. 
+
+We then aimed to a) calculate the proportion of wins for Player 1, b) calculate the rally length distribution and c) vary A2 in order to make the game fair, or allow each player to win 50% of the time. According to parameters for the model, this was implemented via a series of functions. These were used to simulate: a single point, a game, a series of games, plotting functions and an algorithm to vary A2 until the game is fair. 
+
+The "point" function is a recursive function, generating random numbers from a uniform distribution at each stage and progressing the game accordingly. In other words, if p1 = 0.5 and the randomly generated number = 0.3, Player 1 wins that point. The game function takes into account s and t to mimic the game rules. The function runs until t x 5 is reached and stops if the conditions for a game to be won are met. If the limit of the while loop is reached, an error message is emitted prompting the user to input higher probabilities. This was done to avoid an infinite loop and decrease running time of the program. Note that all functions produce outputs detailing the process of the game however, in order make the program more efficient, a quiet() function is used to omit outputs. This can be removed by the user to ensure the functions work correctly. 
+
+Furthermore, game.trial simulates 1000 games and stores the distribution of rally lengths and proportion of wins for player 1. To add power to our experiments, the aforementioned function is applied 10 times to obtain a distribution of wins by player 1. By definition, the distribution is categorized as a binomial distribution. The conditions (Statistical Methods, Mohr et al., 2022) are met as: \
+1. The experiment consists of *n* identical trials. \
+2. Each trial results in mutually exclusive outcomes (player1 win or player2 win). \
+3. The probability of success on a single trial is equal to *p*. The value of *p* remains constant throughout the experiment. \
+4. The trials are independent. \
+
+Therefore, in order to determine the game is unfair and proceed to adjust the a2 value, we perform an Exact Binomial Test at the end of each game trial. The function binom.test(x, n, p) is used for this. X is the number of successes after each trial, in this case the number of games player 1 won; N is the total number of trials, in this case 1000 and p is the hypothesized probability of success, in this case p = 0.5. Therefore, a significant *p-value* will reveal the number of wins in the trial rejects the null hypothesis that the wins are under the binomial distribution with n = 1000 and p = 0.5. 
+
+# Adjusting A2 value
+
+In order to make the game as fair as possible, we vary the a2 parameter. We start with a search space from 0 - 1 in steps of 0.1. We perform 1000 games at each step of the sequence and determine the bounds that lie closest to the expected value for a binomial distribution of that size, in this case E = 500. Once a narrower range is found, i.e 0.6 and 0.7, we decrease the step size to 0.01 and double the number of games (n = 2000) in order to increase the precision of our search. Once the new bounds are found, their average is taken and used as the new A2 value. The same plot is shown again for means of comparison. We chose to stop at the stage of three decimal points as experiments showed that little variation occurred beyond that point. 
+
+
+```{r read files into R, echo = FALSE, include = FALSE, cache=TRUE}
+data1 <- function(file) {
+scan(quiet=TRUE,
+paste0("https://raw.githubusercontent.com/sje30/sp2023/",
+"main/assigns/a2/",file))
+}
+data <- data1("pingpong-a.dat")
+a1 <- data[1]; a2 <- data[2];
+p1 <- data[3]; p2 <- data[4];
+s <- data[5]; t <- data[6];
+sprintf("A1 = %0.2f; A2 = %0.2f; P1=%0.2f; P2=%0.2f; S=%d; T=%d\n",
+a1, a2, p1, p2, s, t)
+
+players = c("player1","player2")
+
+#Taken from: https://stackoverflow.com/questions/34208564/how-to-hide-or-disable-in-function-printed-message
+quiet <- function(x) { 
+  sink(tempfile()) 
+  on.exit(sink()) 
+  invisible(force(x)) 
+} 
+```
+
+``` {r functions, echo = FALSE, cache = TRUE}
+
+point.simulation = function(backplayer, prob.first, prob.back, rally = 1) {
+  #function "begins after serve
+  #give a "backplayer" - returning the serve and their respective probs of winning
+  #rally starts at 1 and increases with the plays
+  #returns rally count and winner
+  
+  cat(backplayer, "hits back \n") #opposite to server hits back
+  rand.first = runif(1)           #generate random number
+  print(rand.first)               #show in output
+  rally = rally + 1               #increase rally count
+  if (rand.first <= prob.first) { #if number is lower than probability of winning
+    cat("Point to",backplayer,"\n") #player wins
+    winner = backplayer #variable assigned for output
+  } else {
+    cat(setdiff(players, backplayer),"hits back \n") #output statement
+    rand.back = runif(1)          #generate random number
+    rally = rally + 1             #increase rally count
+    print(rand.back)              #show in output
+    if (rand.back <= prob.back) { #if number is lower than probability of winning
+      cat("Point to",setdiff(players, backplayer),"\n") #player wins
+      winner = setdiff(players, backplayer) #variable assigned for output
+    } else { #game continues on otherwise
+      game = point.simulation(backplayer,prob.first, prob.back, rally)
+      rally = game[1] #variable assignment for output
+      winner = game[2] #variable assignment for output
+    }
+  }
+  return(c(rally,winner))
+}
+
+serving.simulation = function(server,ace.prob, ...) {
+  #function starts at serve
+  #give server input and probability of aceing
+  cat(server,"serves \n")
+  rand.serve = runif(1)         #generate random number
+  print(rand.serve)             #print 
+  if (rand.serve <= ace.prob) { #if number is lower than probability of winning
+    cat("Ace for", server,"\n")     #server wins
+    winner = server             #variable assigmenet for output
+    rally = 1                   #variable assignment for output
+  } else{                       #otherwise, go into game
+    game = point.simulation(setdiff(players, server), ...)
+    rally = game[1]             #variable assignment for output
+    winner = game[2]            #variable assignment for output
+  }
+  return(c(rally, winner))
+}
+
+game.simulation = function(serve.switch = None, game.end = None, 
+                           ace1 = 0, ace2 = 0, 
+                           point1 = 0, point2 = 0) {
+  
+  #given a point switch pattern and a game end value
+  #returns who won and rally values 
+  
+  points.p1 = 0         #player 1 starts with 0 points
+  points.p2 = 0         #player 2 starts with 0 points
+  rallies = list()      #empty list to store rally values
+  server = c("player1") #player 1 always starts playing
+  
+  #statements for output
+  cat("initial score",points.p1,"-",points.p2,"\n")
+  cat("Starting serve",server,"\n")
+  
+  while (points.p1 < game.end*5 || points.p2 < game.end*5) {
+    #put large end values in case game goes on and on
+    
+    if (length(rallies) > 0 & length(rallies) %% serve.switch == 0) { 
+      #if remainder of division of matches by serve switch is 0
+      
+      server = setdiff(players, server) #time to switch servers
+    }
+    cat("Now serving",server, "\n") #output statement
+    if (server == "player1") { #if server is player1 use these values
+      
+      #run point simulation
+      point = serving.simulation(server, ace1, point2, point1)
+      rallies = append(rallies, point[1]) #count rallies
+      winner = point[2]                   #save winner
+      cat("rally",point[1],"\n")          #output statement 
+      ifelse(winner == "player1", 
+             yes = (points.p1 = points.p1 + 1), 
+             no = (points.p2 = points.p2 + 1)) #add point to whoever won
+      cat("score so far",points.p1,"-",points.p2,"\n") #output statement
+      
+    } else if (server == "player2") { #if server is player2
+      
+      #input these values
+      point = serving.simulation(server, ace2, point1, point2)
+      rallies = append(rallies, point[1]) #count rallies
+      winner = point[2]                   #save winner
+      cat("rally",point[1],"\n")          #output statement 
+      ifelse(winner == "player1", 
+             yes = (points.p1 = points.p1 + 1),
+             no = (points.p2 = points.p2 + 1)) #add point to whoever won
+      cat("score so far",points.p1,"-",points.p2,"\n") #output statement
+    }
+    if ((points.p1 >= game.end || points.p2 >= game.end) && 
+        (abs(points.p1 - points.p2) >= 2)) {break}  #end loop once conditions are satisfied
+    
+    if ((points.p1 >= game.end*5 || points.p2 >= game.end*5)) {
+      stop("Game is too long - input higher probability values") 
+    }
+  }
+  
+  rallies = as.vector(as.numeric(rallies))
+  winner = ifelse(points.p1 > points.p2, "player1", "player2")
+  return(c(rallies, winner))
+}
+
+game.trials = function(trials = 1000,...) {
+  
+  all_winners = rep(0,trials)           #empty list to store winners
+  all_rallies = vector("list",trials)   #empty list to store rallies
+  
+  for (i in 1:trials) {                 #in each trial
+  my_game = quiet(game.simulation(...)) #play the game
+  
+  game_winner = tail(my_game,1)         #get game winner
+  all_winners[i] = game_winner          #list with who won each time
+
+  game_rally = as.numeric(head(my_game, -1))    #get rally values as number
+  all_rallies[[i]] = c(game_rally)              #list with all rally values
+  }
+  
+  p1wins = sum(length(which(all_winners == "player1"))) #No player1 wins
+  bitest = binom.test(p1wins,trials, p = 0.5, alternative = "two.sided") #binomial test 
+                                                                         #against p = 0.5
+  pval = bitest$p.value                                                  #extract p-value
+  
+  return(c(all_rallies, p1wins, pval))
+
+}
+
+ping.pong.plots = function(title, rallies, p1winners, pvals, a2plot) { 
+  
+  #Function makes plot for each case
+par(mfrow=c(2,2)) #create subplots
+h = hist(unlist(rallies),                              #plot histogram of 
+                                                       #rally distribution
+     breaks = 0:max(unlist(rallies)), #make breaks exact numbers of r ally lengths
+     main = "Rally lengths for 10 sims of 1000 games", #subplot title
+     xlab = "Rally Length",                            #x-label
+     ylab = "Frequency",                               #y-label
+     col = 'royalblue3',                               #bar colours
+     xlim = c(0, max(unlist(unlist(rallies)))),
+     ylim = c(0, (max(table(unlist(unlist(rallies))))+2000)),
+     xaxt="n")                    #remove x-ticks to insert my own
+axis(side=1,at=h$mids,labels=seq(1,max(unlist(unlist(rallies)))),las = 2) #customised x-ticks
+text(x = 14, y = length(rallies[[1]])*50,pos = 2,paste0("t =",t,"\n s =",s,"\n a1 =",a1,
+            "\n a2 =",a2plot,"\n p1 =",p1,"\n p2 = ",p2)) #add parameters of model to this plot
+mtext(LETTERS[1], adj=0, line=2)                          #add subplot letter
+title(main = title,outer=TRUE, line=-1)                   #add main plot title
+
+p2winners = c(length(rallies[[1]]) - p1winners)        #calculate p2 wins
+x = barplot(c(mean(p1winners)/length(rallies[[1]]),
+              mean(p2winners)/length(rallies[[1]])),   #average wins for each player
+     main = "Average wins for 10 sims of 1000 games",  #subplot title
+     xlab = "Players",                                 #x-label
+     ylab = "Average proportion",                      #y-label
+     ylim = c(0,1),                                    #y-axis limit
+     col = 'navy',                                     #bar colours
+     space = 0.5)                                      #space between bars
+y = as.matrix(c(mean(p1winners)/length(rallies[[1]]), 
+                mean(p2winners)/length(rallies[[1]]))) #matrix with values
+axis(1, at = x, labels = c("Player 1","Player 2"))     #x-ticks
+text(x,y,pos = 3, labels=y)                            #add values on top of bars
+mtext(LETTERS[2], adj=0, line=2)                       #add subplot letter
+
+hist(p1winners,                                          #distribution of p1 wins
+     xlim = c(0,length(rallies[[1]])),                   #x-axis limit
+     ylim = c(0,10),                                     #y-axis limit
+     xlab = "N wins / RV",                               #x-axis label
+     col = adjustcolor( "lightslateblue", alpha.f = 0.5),#bar colours - transparent
+     main = "P1 wins and binomial of p = 0.5")           #subplot title
+
+binomial = rbinom(10, size = length(rallies[[1]]), prob = 0.5) #distribution of RVs with p
+hist(binomial,add = TRUE,                                      #plot histogram
+     col = adjustcolor("maroon",alpha.f = 0.5))                #colour - transparent
+legend(x = 'topleft',legend = c("Prop. player 1 wins", "RVs with p = 0.5 "),
+       fill = c("lightslateblue","maroon"))                    #figure legend
+mtext(LETTERS[3], adj=0, line=2)                               #add subplot letter
+
+hist(pvals, breaks = c(seq(0, 1, 0.05)),                       #plot p-vals
+     col = 'cyan4',                                            #bar colors
+     main = "P-value distribution < .05 and > .05",            #subplot title
+     xlab = "P-values")                                        #x-axis label
+abline(v=0.05, col="black")                                    #line for significance
+mtext(LETTERS[4], adj=0, line=2)                               #subplot letter
+
+}
+
+adjust.a2 = function(begin, end, ntrials, step) {
+  
+  #Find area for adjusted a2
+  
+  a2vals = seq(from = begin, to = end, by = step) #start with a sequence 
+  adjusted_p1winners = rep(0, length(a2vals)) #empty list for p1wins
+
+  for (i in 1:length(a2vals)) {
+    trial = game.trials(trials = ntrials, serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2vals[i],
+                point1 = p1, point2 = p2) #play game n times with different a2 vals
+
+    adjusted_p1winners[i] = unlist(tail(trial,2)[1]) #calculate adjusted winners
+  }
+  
+  diff = (adjusted_p1winners - ntrials/2) #get difference between expected value (0.5)
+  diff = rank(abs(diff), ties.method = c("first")) #rank values
+  start = a2vals[which(diff == 1)] #obtain best
+  finish = a2vals[which(diff == 2)] #and second best
+  
+return(c(start, finish)) #return these
+}
+
+all.adjust.a2 = function() {
+  start = 0  #always start with this value
+  finish = 1 #always end with this value
+  numtrials = 1000 #start with this number of trials
+  steps = 0.1 #start with this step 
+  firsttrial = adjust.a2(start, finish, numtrials, steps) #find zone to the 0.1
+  print(firsttrial) #print
+  secondtrial = adjust.a2(min(firsttrial),max(firsttrial),numtrials*2, steps/10) #finegrain search 
+  print(secondtrial) #print
+  new_a2 = mean(secondtrial) #final value will be average of the two
+  print(new_a2) #print
+
+nsims = 10 #with chosen value, perform simulation 10x
+p1winners = rep(0,nsims)           #empty list to store winners
+rallies = vector("list",nsims)     #empty list to store rallies
+pval = rep(0,nsims)                #empty list to store pvalues
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = new_a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+
+ptit = " 'Fair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, new_a2) #plot
+return(new_a2)
+}
+
+```
+
+## Results
+The procedure was tested on three different scenarios. For each scenario, plots are given for 'Unfair metrics', i.e before a2 value adjustment (Figures 1, 3 and 5) and 'Fair metrics', for probability of each player to win a game = 0.5 (Figures 2, 4 and 6). 
+
+## Scenario A
+```{r ScenarioA, echo = FALSE, cache=TRUE, include = FALSE}
+nsims = 10                       #simulations
+p1winners = rep(0,nsims)         #empty list to store winners
+rallies = vector("list",nsims)   #empty list to store rallies
+pval = rep(0,nsims)              #store p-values
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+```
+
+
+```{r, figs1, echo = FALSE, cache=TRUE, fig.height=10, fig.width=10, fig.cap="Scenario A - unadjusted"}
+ptit = " Scenario A - 'Unfair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, a2)
+```
+**Figure 1:** The figure shows relevant metrics for scenario A. All plots are given for 10 simulations of 1000 games. (A) Shows rally lengths distributions. (B) Shows the average proportion of matches won by each player across all simulations. (C) Shows the the distribution of player1's wins as well as a distribution of same size of random variables with probability = 0.5. Although this cannot show immediate conclusions, it can provide a reference of a possible binomial distribution of p = 0.5. (D) Shows p-values from Exact Binomial Test. The black line denotes significance level of *p* = .05. Therefore, values to the left of this line show distributions significantly different of distributions with p = 0.5.  
+
+
+```{r, figs2, echo = FALSE, cache=TRUE, fig.height=10, fig.width=10, fig.cap="Scenario A - adjusted"}
+
+newa2 = quiet(all.adjust.a2()) #perform function 
+
+```
+**Figure 2:** The figure shows relevant metrics for scenario A. The adjusted a2 = `r newa2`. All plots are given for 10 simulations of 1000 games. (A) Shows rally lengths distribution. (B) Shows the average proportion of matches won by each player across all simulations. If the game is fair, these values should be approximately equal (C) Shows the the distribution of player1's wins as well as a distribution of same size of random variables with probability = 0.5. A higher overlap between these distribution is an indication the adjusted games are fair. (D) Shows p-values from Exact Binomial Test. The black line denotes significance level of *p* = .05. Most or all values to the right of the black line strongly indicate the game is fair. 
+
+\newpage
+## Scenario B
+```{r ScenarioB, echo=FALSE, cache = TRUE, include=FALSE}
+data1 <- function(file) {
+scan(quiet=TRUE,
+paste0("https://raw.githubusercontent.com/sje30/sp2023/",
+"main/assigns/a2/",file))
+}
+data <- data1("pingpong-b.dat")
+a1 <- data[1]; a2 <- data[2];
+p1 <- data[3]; p2 <- data[4];
+s <- data[5]; t <- data[6];
+sprintf("A1 = %0.2f; A2 = %0.2f; P1=%0.2f; P2=%0.2f; S=%d; T=%d\n",
+a1, a2, p1, p2, s, t)
+
+nsims = 10
+p1winners = rep(0,nsims)           #empty list to store winners
+rallies = vector("list",nsims)   #empty list to store rallies
+pval = rep(0,nsims)  
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+```
+
+
+```{r figs3, echo=FALSE, cache = TRUE, fig.height=10, fig.width=10, fig.cap="Scenario B - unadjusted"}
+ptit = " Scenario B - 'Unfair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, a2)
+```
+**Figure 3:** The figure shows relevant metrics for scenario B. All plots are given for 10 simulations of 1000 games. (A) Shows rally lengths distribution. (B) Shows the average proportion of matches won by each player across all simulations. (C) Shows the the distribution of player1's wins as well as a distribution of same size of random variables with probability = 0.5. Although this cannot show immediate conclusions, it can provide a reference of a possible binomial distribution of p = 0.5. (D) Shows p-values from Exact Binomial Test. The black line denotes significance level of *p* = .05. Therefore, values to the left of this line show distributions significantly different of distributions with p = 0.5. 
+
+```{r figs4, echo=FALSE, cache = TRUE, fig.height=10, fig.width=10, fig.cap="Scenario B - adjusted"}
+newa2 = quiet(all.adjust.a2())
+```
+**Figure 4:** The figure shows relevant metrics for scenario B. The adjusted a2 = `r newa2`. All plots are given for 10 simulations of 1000 games. (A) Shows rally lengths distribution. (B) Shows the average proportion of matches won by each player across all simulations. If the game is fair, these values should be approximately equal (C) Shows the the distribution of player1's wins as well as a distribution of same size of random variables with probability = 0.5. A higher overlap between these distribution is an indication the adjusted games are fair. (D) Shows p-values from Exact Binomial Test. The black line denotes significance level of *p* = .05. Most or all values to the right of the black line strongly indicate the game is fair. 
+
+
+\newpage
+## Scenario C
+
+```{r ScenarioC, echo=FALSE, cache=TRUE, include = FALSE}
+data1 <- function(file) {
+scan(quiet=TRUE,
+paste0("https://raw.githubusercontent.com/sje30/sp2023/",
+"main/assigns/a2/",file))
+}
+data <- data1("pingpong-c.dat")
+a1 <- data[1]; a2 <- data[2];
+p1 <- data[3]; p2 <- data[4];
+s <- data[5]; t <- data[6];
+sprintf("A1 = %0.2f; A2 = %0.2f; P1=%0.2f; P2=%0.2f; S=%d; T=%d\n",
+a1, a2, p1, p2, s, t)
+
+nsims = 10
+p1winners = rep(0,nsims)           #empty list to store winners
+rallies = vector("list",nsims)   #empty list to store rallies
+pval = rep(0,nsims)  
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+```
+
+
+```{r figs5, echo=FALSE, cache=TRUE, fig.height=10, fig.width=10, fig.cap="Scenario C - unadjusted"}
+ptit = " Scenario C - 'Unfair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, a2)
+```
+**Figure 5: **The figure shows relevant metrics for scenario C. All plots are given for 10 simulations of 1000 games. (A) Shows rally lengths distribution. (B) Shows the average proportion of matches won by each player across all simulations. (C) Shows the the distribution of player1's wins as well as a distribution of same size of random variables with probability = 0.5. Although this cannot show immediate conclusions, it can provide a reference of a possible binomial distribution of p = 0.5. (D) Shows p-values from Exact Binomial Test. The black line denotes significance level of *p* = .05. Therefore, values to the left of this line show distributions significantly different of distributions with p = 0.5. 
+
+```{r figs6, echo=FALSE, cache = TRUE, fig.height=10, fig.width=10, fig.cap="Scenario C - adjusted"}
+newa2 = quiet(all.adjust.a2())
+
+```
+**Figure 6: **The figure shows relevant metrics for scenario C. The adjusted a2 = `r newa2`. All plots are given for 10 simulations of 1000 games. (A) Shows rally lengths distribution. (B) Shows the average proportion of matches won by each player across all simulations. If the game is fair, these values should be approximately equal (C) Shows the the distribution of player1's wins as well as a distribution of same size of random variables with probability = 0.5. A higher overlap between these distribution is an indication the adjusted games are fair. (D) Shows p-values from Exact Binomial Test. The black line denotes significance level of *p* = .05. Most or all values to the right of the black line strongly indicate the game is fair. 
+
+\newpage 
+## Appendix
+
+Full code used: 
+```{r Appendix, eval = FALSE, cache = TRUE}
+
+                                    ## DEFINITIONS ##
+
+players = c("player1","player2") #define player names
+
+#From: https://stackoverflow.com/questions/34208564/how-to-hide-or-disable-in-function-printed-message
+quiet <- function(x) { 
+  sink(tempfile()) 
+  on.exit(sink()) 
+  invisible(force(x)) 
+} 
+
+
+                                    ## FUNCTIONS ##
+
+point.simulation = function(backplayer, prob.first, prob.back, rally = 1) {
+  #function "begins after serve
+  #give a "backplayer" - returning the serve and their respective probs of winning
+  #rally starts at 1 and increases with the plays
+  #returns rally count and winner
+  
+  cat(backplayer, "hits back \n") #opposite to server hits back
+  rand.first = runif(1)           #generate random number
+  print(rand.first)               #show in output
+  rally = rally + 1               #increase rally count
+  if (rand.first <= prob.first) { #if number is lower than probability of winning
+    cat("Point to",backplayer,"\n") #player wins
+    winner = backplayer #variable assigned for output
+  } else {
+    cat(setdiff(players, backplayer),"hits back \n") #output statement
+    rand.back = runif(1)          #generate random number
+    rally = rally + 1             #increase rally count
+    print(rand.back)              #show in output
+    if (rand.back <= prob.back) { #if number is lower than probability of winning
+      cat("Point to",setdiff(players, backplayer),"\n") #player wins
+      winner = setdiff(players, backplayer) #variable assigned for output
+    } else { #game continues on otherwise
+      game = point.simulation(backplayer,prob.first, prob.back, rally)
+      rally = game[1] #variable assignment for output
+      winner = game[2] #variable assignment for output
+    }
+  }
+  return(c(rally,winner))
+}
+
+serving.simulation = function(server,ace.prob, ...) {
+  #function starts at serve
+  #give server input and probability of aceing
+  cat(server,"serves \n")
+  rand.serve = runif(1)         #generate random number
+  print(rand.serve)             #print 
+  if (rand.serve <= ace.prob) { #if number is lower than probability of winning
+    cat("Ace for", server,"\n")     #server wins
+    winner = server             #variable assigmenet for output
+    rally = 1                   #variable assignment for output
+  } else{                       #otherwise, go into game
+    game = point.simulation(setdiff(players, server), ...)
+    rally = game[1]             #variable assignment for output
+    winner = game[2]            #variable assignment for output
+  }
+  return(c(rally, winner))
+}
+
+game.simulation = function(serve.switch = None, game.end = None, 
+                           ace1 = 0, ace2 = 0, 
+                           point1 = 0, point2 = 0) {
+  
+  #given a point switch pattern and a game end value
+  #returns who won and rally values 
+  
+  points.p1 = 0         #player 1 starts with 0 points
+  points.p2 = 0         #player 2 starts with 0 points
+  rallies = list()      #empty list to store rally values
+  server = c("player1") #player 1 always starts playing
+  
+  #statements for output
+  cat("initial score",points.p1,"-",points.p2,"\n")
+  cat("Starting serve",server,"\n")
+  
+  while (points.p1 < game.end*5 || points.p2 < game.end*5) {
+    #put large end values in case game goes on and on
+    
+    if (length(rallies) > 0 & length(rallies) %% serve.switch == 0) { 
+      #if remainder of division of matches by serve switch is 0
+      
+      server = setdiff(players, server) #time to switch servers
+    }
+    cat("Now serving",server, "\n") #output statement
+    if (server == "player1") { #if server is player1 use these values
+      
+      #run point simulation
+      point = serving.simulation(server, ace1, point2, point1)
+      rallies = append(rallies, point[1]) #count rallies
+      winner = point[2]                   #save winner
+      cat("rally",point[1],"\n")          #output statement 
+      ifelse(winner == "player1", 
+             yes = (points.p1 = points.p1 + 1), 
+             no = (points.p2 = points.p2 + 1)) #add point to whoever won
+      cat("score so far",points.p1,"-",points.p2,"\n") #output statement
+      
+    } else if (server == "player2") { #if server is player2
+      
+      #input these values
+      point = serving.simulation(server, ace2, point1, point2)
+      rallies = append(rallies, point[1]) #count rallies
+      winner = point[2]                   #save winner
+      cat("rally",point[1],"\n")          #output statement 
+      ifelse(winner == "player1", 
+             yes = (points.p1 = points.p1 + 1),
+             no = (points.p2 = points.p2 + 1)) #add point to whoever won
+      cat("score so far",points.p1,"-",points.p2,"\n") #output statement
+    }
+    if ((points.p1 >= game.end || points.p2 >= game.end) && 
+        (abs(points.p1 - points.p2) >= 2)) {break}  
+    #end loop once conditions are satisfied
+    
+    if ((points.p1 >= game.end*5 || points.p2 >= game.end*5)) {
+      stop("Game is too long - input higher probability values") 
+    }
+  }
+  
+  rallies = as.vector(as.numeric(rallies))
+  winner = ifelse(points.p1 > points.p2, "player1", "player2")
+  return(c(rallies, winner))
+}
+
+game.trials = function(trials = 1000,...) {
+  
+  all_winners = rep(0,trials)           #empty list to store winners
+  all_rallies = vector("list",trials)   #empty list to store rallies
+  
+  for (i in 1:trials) {                 #in each trial
+  my_game = quiet(game.simulation(...)) #play the game
+  
+  game_winner = tail(my_game,1)         #get game winner
+  all_winners[i] = game_winner          #list with who won each time
+
+  game_rally = as.numeric(head(my_game, -1))    #get rally values as number
+  all_rallies[[i]] = c(game_rally)              #list with all rally values
+  }
+  
+  p1wins = sum(length(which(all_winners == "player1"))) #No player1 wins
+  bitest = binom.test(p1wins,trials, p = 0.5, alternative = "two.sided") #binomial test 
+                                                                         #against p = 0.5
+  pval = bitest$p.value                                                  #extract p-value
+  
+  return(c(all_rallies, p1wins, pval))
+
+}
+
+ping.pong.plots = function(title, rallies, p1winners, pvals, a2plot) { 
+  
+  #Function makes plot for each case
+pdf(file = "~/lastgraph.pdf")
+par(mfrow=c(2,2)) #create subplots
+h = hist(unlist(rallies),                              #plot histogram of 
+                                                       #rally distribution
+     breaks = 0:max(unlist(rallies)), #make breaks exact numbers of r ally lengths
+     main = "Rally lengths for 10 sims of 1000 games", #subplot title
+     xlab = "Rally Length",                            #x-label
+     ylab = "Frequency",                               #y-label
+     col = 'royalblue3',                               #bar colours
+     xlim = c(0, max(unlist(unlist(rallies)))),
+     ylim = c(0, (max(table(unlist(unlist(rallies))))+2000)),
+     xaxt="n")                    #remove x-ticks to insert my own
+axis(side=1,at=h$mids,labels=seq(1,max(unlist(unlist(rallies)))),las = 2) #customised x-ticks
+text(x = 14, y = length(rallies[[1]])*50,pos = 2,paste0("t =",t,"\n s =",s,"\n a1 =",a1,
+            "\n a2 =",a2plot,"\n p1 =",p1,"\n p2 = ",p2)) #add parameters of model to this plot
+mtext(LETTERS[1], adj=0, line=2)                          #add subplot letter
+title(main = title,outer=TRUE, line=-1)                   #add main plot title
+
+p2winners = c(length(rallies[[1]]) - p1winners)        #calculate p2 wins
+x = barplot(c(mean(p1winners)/length(rallies[[1]]),
+              mean(p2winners)/length(rallies[[1]])),   #average wins for each player
+     main = "Average wins for 10 sims of 1000 games",  #subplot title
+     xlab = "Players",                                 #x-label
+     ylab = "Average proportion",                      #y-label
+     ylim = c(0,1),                                    #y-axis limit
+     col = 'navy',                                     #bar colours
+     space = 0.5)                                      #space between bars
+y = as.matrix(c(mean(p1winners)/length(rallies[[1]]), 
+                mean(p2winners)/length(rallies[[1]]))) #matrix with values
+axis(1, at = x, labels = c("Player 1","Player 2"))     #x-ticks
+text(x,y,pos = 3, labels=y)                            #add values on top of bars
+mtext(LETTERS[2], adj=0, line=2)                       #add subplot letter
+
+hist(p1winners,                                          #distribution of p1 wins
+     xlim = c(0.3*length(rallies[[1]]),
+              0.7*length(rallies[[1]])),                 #x-axis limit
+     ylim = c(0,10),                                     #y-axis limit
+     xlab = "N wins / RV",                               #x-axis label
+     col = adjustcolor( "lightslateblue", alpha.f = 0.5),#bar colours - transparent
+     main = "P1 wins and binomial of p = 0.5")           #subplot title
+
+binomial = rbinom(10, size = length(rallies[[1]]), prob = 0.5) #distribution of RVs with p
+hist(binomial,add = TRUE,                                      #plot histogram
+     col = adjustcolor("maroon",alpha.f = 0.5))                #colour - transparent
+legend(x = 'topleft',legend = c("Prop. player 1 wins", "RVs with p = 0.5 "),
+       fill = c("lightslateblue","maroon"))                    #figure legend
+mtext(LETTERS[3], adj=0, line=2)                               #add subplot letter
+
+hist(pvals, breaks = c(seq(0, 1, 0.05)),                       #plot p-vals
+     col = 'cyan4',                                            #bar colors
+     main = "P-value distribution < .05 and > .05",            #subplot title
+     xlab = "P-values")                                        #x-axis label
+abline(v=0.05, col="black")                                    #line for significance
+mtext(LETTERS[4], adj=0, line=2)                               #subplot letter
+
+dev.off()
+}
+
+adjust.a2 = function(begin, end, ntrials, step) {
+  
+  #Find area for adjusted a2
+  
+  a2vals = seq(from = begin, to = end, by = step) #start with a sequence 
+  adjusted_p1winners = rep(0, length(a2vals)) #empty list for p1wins
+
+  for (i in 1:length(a2vals)) {
+    trial = game.trials(trials = ntrials, serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2vals[i],
+                point1 = p1, point2 = p2) #play game n times with different a2 vals
+
+    adjusted_p1winners[i] = unlist(tail(trial,2)[1]) #calculate adjusted winners
+  }
+  
+  diff = (adjusted_p1winners - ntrials/2) #get difference between expected value (0.5)
+  diff = rank(abs(diff), ties.method = c("first")) #rank values
+  start = a2vals[which(diff == 1)] #obtain best
+  finish = a2vals[which(diff == 2)] #and second best
+  
+return(c(start, finish)) #return these
+}
+
+all.adjust.a2 = function() {
+  start = 0  #always start with this value
+  finish = 1 #always end with this value
+  numtrials = 1000 #start with this number of trials
+  steps = 0.1 #start with this step 
+  firsttrial = adjust.a2(start, finish, numtrials, steps) #find zone to the 0.1
+  print(firsttrial) #print
+  secondtrial = adjust.a2(min(firsttrial),max(firsttrial),numtrials*2, steps/10) #finegrain search 
+  print(secondtrial) #print
+  new_a2 = mean(secondtrial) #final value will be average of the two
+  print(new_a2) #print
+
+nsims = 10 #with chosen value, perform simulation 10x
+p1winners = rep(0,nsims)           #empty list to store winners
+rallies = vector("list",nsims)     #empty list to store rallies
+pval = rep(0,nsims)                #empty list to store pvalues
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = new_a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+
+ptit = " 'Fair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, new_a2) #plot
+return(new_a2)
+}
+
+                                    ## SCENARIO A ##
+
+
+data1 <- function(file) {
+scan(quiet=TRUE,
+paste0("https://raw.githubusercontent.com/sje30/sp2023/",
+"main/assigns/a2/",file))
+}
+data <- data1("pingpong-a.dat")
+a1 <- data[1]; a2 <- data[2];
+p1 <- data[3]; p2 <- data[4];
+s <- data[5]; t <- data[6];
+sprintf("A1 = %0.2f; A2 = %0.2f; P1=%0.2f; P2=%0.2f; S=%d; T=%d\n",
+a1, a2, p1, p2, s, t)
+
+nsims = 10                       #simulations
+p1winners = rep(0,nsims)         #empty list to store winners
+rallies = vector("list",nsims)   #empty list to store rallies
+pval = rep(0,nsims)              #store p-values
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+
+ptit = " 'Unfair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, a2)
+
+quiet(find.new.a2(a2, p1winners))
+ 
+
+                                    ## SCENARIO B ##
+data1 <- function(file) {
+scan(quiet=TRUE,
+paste0("https://raw.githubusercontent.com/sje30/sp2023/",
+"main/assigns/a2/",file))
+}
+data <- data1("pingpong-b.dat")
+a1 <- data[1]; a2 <- data[2];
+p1 <- data[3]; p2 <- data[4];
+s <- data[5]; t <- data[6];
+sprintf("A1 = %0.2f; A2 = %0.2f; P1=%0.2f; P2=%0.2f; S=%d; T=%d\n",
+a1, a2, p1, p2, s, t)
+
+nsims = 10
+p1winners = rep(0,nsims)           #empty list to store winners
+rallies = vector("list",nsims)   #empty list to store rallies
+pval = rep(0,nsims)  
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+
+ptit = " 'Unfair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, a2)
+
+quiet(find.new.a2(a2, p1winners))
+
+
+                                    ## SCENARIO C ##
+data1 <- function(file) {
+scan(quiet=TRUE,
+paste0("https://raw.githubusercontent.com/sje30/sp2023/",
+"main/assigns/a2/",file))
+}
+data <- data1("pingpong-c.dat")
+a1 <- data[1]; a2 <- data[2];
+p1 <- data[3]; p2 <- data[4];
+s <- data[5]; t <- data[6];
+sprintf("A1 = %0.2f; A2 = %0.2f; P1=%0.2f; P2=%0.2f; S=%d; T=%d\n",
+a1, a2, p1, p2, s, t)
+
+nsims = 10
+p1winners = rep(0,nsims)           #empty list to store winners
+rallies = vector("list",nsims)   #empty list to store rallies
+pval = rep(0,nsims)  
+
+for (ii in 1:nsims) {
+  g = game.trials(serve.switch = s, game.end = t, 
+                ace1 = a1, ace2 = a2,
+                point1 = p1, point2 = p2)
+
+rallies[[ii]] = head(g,-2)
+p1winners[ii] = unlist(tail(g,2)[1])
+pval[ii] = unlist(tail(g,2)[2])
+
+}
+
+ptit = " 'Unfair' metrics"
+ping.pong.plots(ptit, rallies, p1winners, pval, a2)
+
+quiet(find.new.a2(a2, p1winners))
+
+
+```
+
+

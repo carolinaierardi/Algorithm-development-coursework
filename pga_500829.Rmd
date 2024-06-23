@@ -1,0 +1,1016 @@
+---
+title: "pga_500829"
+author: '500829'
+date: "2024-03-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = TRUE, cache = TRUE,
+                      warning = FALSE, message = FALSE, eval = FALSE)
+
+```
+
+```{r Library installation}
+library(ggplot2)
+library(tidyverse)
+#install.packages('plot.matrix')
+library(plot.matrix)
+library(gplots)
+library(reshape2)
+
+```
+
+
+```{r Wright Fisher simulation}
+
+# Question 1
+N = 1000                                  #individuals per generation
+first_gen = vector(mode='list', length=N) #empty list for initial population
+p_mutation = 0.01                         #probability of mutation
+n_generations = 5000                      #number of generations
+
+mutation = function(individual,probability_of_mutation) {
+  ## Function for mutations
+  mut = rbinom(1, 1, probability_of_mutation) #if TRUE, mutation occurs
+  if (mut == 1) { 
+    mut_position = runif(1, min = 0, max = 1) #mutation position from 
+                                              #unit interval
+    return(c(individual, mut_position))       #add mutation to individual
+  } else {
+    return(individual) #otherwise, individual is maintained the same 
+  }
+}
+
+next_gen = function(generation,probability_mutation) {
+  
+  #Function computes a generation 
+  
+    #randomly choose a parent for the next generation
+    next_generation = sample(generation, 
+                             size = length(generation),
+                             replace = TRUE)
+    #for each individual, apply mutation function 
+    next_generation_m = sapply(next_generation, function(x) mutation(x, probability_mutation))
+    
+    return(next_generation_m) #return next generation 
+
+}
+
+current_gen = next_gen(first_gen, p_mutation) #perform one round of generation 
+
+#for 5000x, have new population
+for (i in 1:n_generations) {current_gen = next_gen(current_gen, p_mutation)}
+
+```
+
+```{r How many mutations are present in all individuals}
+
+frequency = which(table(unlist(current_gen)) == N)
+cat("There are",length(frequency),"genes common to all individuals.")
+
+
+```
+
+```{r Subset of individuals}
+
+all_mutations = unique(unlist(current_gen))  #check for each mutation
+
+individuals_with_mut = sapply(all_mutations, function(y) 
+  which(sapply(current_gen, function(x) y %in% x))) #set of individuals 
+                                                    #with each unique mutation
+
+check_sets = function(x,y) {
+  
+  #function that checks set of individuals with a given mutation are: 
+  # a subset of another set of individuals with that mutation
+  #a null set
+  #otherwise return 0
+  if (all(x %in% y) || all(y %in% x)) {
+    return(1)
+  } else if (length(intersect(x,y)) == 0) {
+    return(2)
+  } else {
+    return(0)
+  }
+} 
+
+#check for every pair of sets
+set_results = sapply(individuals_with_mut, function(x) sapply(individuals_with_mut, function(y) check_sets(x,y)))
+
+cat("There should be 0 values:",length(which(set_results == 0)))
+
+df = melt(set_results)
+df$value = df$value %>% as.factor()
+ggplot(df, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() + 
+  labs(x = "Unique mutations",
+       y = "Unique mutations",
+       title = "Intersection of individuals with a given mutation")
+
+```
+
+```{r Function for allele frequency spectrum}
+
+get_k = function(generation) {
+  #Function obtains average pairwise differences between 
+  #individuals
+  
+  k = combn(generation, 2, function(x) {
+    length(c(setdiff(x[[1]],x[[2]]), setdiff(x[[2]],x[[1]])))})
+
+  return(mean(k)) #return k
+  
+}
+
+Tajma_D = function(N, S, k) {
+  
+  #calculates Tajma's D and Watterson's theta
+  
+  a1 = sum(1/seq(1,N-1))
+  b1 = (N + 1)/(3*(N - 1))
+  c1 = b1 - (1/a1)
+  e1 = c1/a1
+
+  a2 = sum(1/(seq(1,N-1)^2))
+  b2 = (2*(N^2 + N + 3))/(9*N*(N - 1))
+  c2 = b2 + ((N+2)/(a1*N)) + (a2/(a1^2))
+  e2 = c2 /(a2 + a1^2)
+  
+  theta_w = S / a1
+
+  D_numerator = k - theta_w
+  D_denominator = sqrt((e1*S) + (e2*S*(S-1)))
+  D = D_numerator / D_denominator
+  
+  
+  return(c(D, theta_w))
+
+}
+
+```
+
+```{r Generate allele plot}
+
+current_gen = next_gen(first_gen, p_mutation) #obtain first generation
+all_allele = vector(mode='list', length=n_generations + 1)
+allele_freq = table(unlist(current_gen))/N #allele frequency for first generation
+all_allele[[1]] = allele_freq #add to list
+
+for (i in 1:n_generations) {
+    current_gen = next_gen(current_gen, p_mutation)#compute next generation
+    new_allele_freq = table(unlist(current_gen))/N #compute allele frequency 
+    all_allele[[i + 1]] = new_allele_freq          #add to empty list
+}
+
+current_mutations = names(all_allele[[length(all_allele)]])
+
+allele_frequency = sapply(1:length(all_allele), function(i)      
+  sapply(1:length(current_mutations), function(x) 
+    all_allele[[i]][which(names(all_allele[[i]]) == current_mutations[x])]))
+  
+  #make into numeric vector
+allele_frequency = as.numeric(allele_frequency)
+  #reshape to matrix
+dim(allele_frequency) = c(length(current_mutations), length(all_allele))
+  
+matplot(t(allele_frequency), type = "l", col = 1:length(current_mutations),
+          ylab = "Allele Frequency", xlab = "Generation",
+          main = "Allele frequency per generation")
+```
+
+
+```{r Obtain question statistics}
+#Function to be repeated 25x
+
+evaluate_population = function() {
+  
+  current_gen = next_gen(first_gen, p_mutation) #obtain first generation
+  
+  for (i in 1:n_generations) {
+    current_gen = next_gen(current_gen, p_mutation)#compute next generation
+  }
+
+  my_k = get_k(current_gen) #compute K for final generation
+  my_S = length(table(unlist(current_gen))[table(unlist(current_gen)) != 1000])
+  summary_stats = Tajma_D(N, my_S, my_k) #compute Tajma's D and theta for final
+  #generation
+  cat("S =",my_S, ", k =",my_k,", Tajma's D =",summary_stats[1],
+      ", Waterson's theta = ",summary_stats[2])
+  
+  current_mutations = table(unlist(current_gen))
+
+  freq = table(current_mutations)
+  # barplot(freq[which(freq != 1000)], xlab = "Frequency in sample",
+  #         ylab = "Proportion of SNPs", col = "green")
+  
+  #plot the matrixs rows as lines
+
+  return(c(my_S, my_k, summary_stats, current_gen))
+  
+}
+
+```
+
+
+```{r Repeat evaluation 25x}
+
+repetitions = 25
+my_stats = lapply(1:repetitions, function(i) evaluate_population())
+
+saveRDS(my_stats, file = "q1_simulations.rds")
+
+```
+
+```{r Plot allele frequency spectrum}
+
+#Make plot of allele frequency spectrum
+my_stats = readRDS("q1_simulations.rds")
+
+gen = list()
+for (i in 1:repetitions) { 
+gen = append(gen, my_stats[[i]][5:length(my_stats[[i]])]) }
+
+current_mutations = table(unlist(gen))
+
+hist(current_mutations[which(current_mutations != 1000)], 
+     col = "darkgreen", breaks = 10, xaxt = "n", main = "Frequency Allele Spectrum",
+     xlab = "Frequency in sample", ylab = "Number of SNPs")
+axis(1, at = seq(0, 1000, by = 100))
+
+
+```
+
+
+```{r Obtain and plot statistics from trial}
+
+#report statistics for 25 repetitions
+my_stats = readRDS("q1_simulations.rds")
+library(stats)
+
+trials_S = unlist(sapply(my_stats, `[`, 1))
+trials_k = unlist(sapply(my_stats, `[`, 2))
+trials_D = unlist(sapply(my_stats, `[`, 3))
+D_diff_zero = t.test(trials_D, mu = 0)
+trials_Theta = unlist(sapply(my_stats, `[`, 4))
+
+par(mfrow = c(1,3))
+hist(trials_k, main = "k", col = "blue", xlab = "Average pairwise differences")
+hist(trials_D, main = paste0("Tajima's D (p = ",
+                             round(D_diff_zero$p.value,digits = 2),")"),
+     col = "blue", xlab = "D")
+hist(trials_Theta, main =  "Waterson's theta", col = "blue", xlab = "Theta")
+
+```
+
+```{r Repeating Tajma D}
+
+#report Tajima's D over time 
+new_N = 100
+new_n_gen = 1000
+x = seq(1,1000,5)
+
+D_over_time = matrix(0, length(x),repetitions)
+
+for (rep in 1:repetitions) {
+  
+  starting_pop = my_stats[[rep]][5:length(my_stats[[rep]])]
+  starting_pop = sample(starting_pop, new_N, replace = FALSE)
+  my_D = rep(0, new_n_gen/5)
+  ii = 1
+  cat(rep, "starting \n")
+
+  for (i in 1:new_n_gen) { #for 1000x, have new population
+    starting_pop = next_gen(starting_pop, p_mutation)
+
+    if (i %% 5 == 0) {
+      S_value = length(table(unlist(starting_pop))[table(unlist(starting_pop)) != 1000])
+      k_value = get_k(starting_pop)
+      my_D[ii] = Tajma_D(new_N, S_value, k_value)
+      ii = ii + 1
+    }
+  }
+  D_over_time[,rep] = my_D
+ 
+}
+
+saveRDS(D_over_time, file = "q1_dovertime.rds")
+
+```
+
+
+```{r fig.width=10, fig.height=10}
+
+D_over_time = readRDS("q1_dovertime.rds")
+
+par(mar = c(1, 1, 1, 1),oma=c(5,5,5,5),mfrow = c(5,5))
+
+
+for (i in 1:repetitions) {
+  plot(1:length(D_over_time[,i]), D_over_time[,i], type = "b")
+}
+
+mtext("Time",side=1,line=2,outer=TRUE,cex=1.3)
+mtext("Tajima's D",side=2,line=2,outer=TRUE,cex=1.3,las=0)
+mtext("Tajima'S D over time",side=3,line=2,outer=TRUE,cex=1.3)
+
+```
+```{r}
+
+# Question 2
+
+population_size = 100
+generations = 1000
+pop1 = vector(mode = "list", length = population_size)
+pop2 = vector(mode = "list", length = population_size)
+
+p_choose_between = 0.01
+p_mutation = 0.1
+
+parent_choosing = function(own_pop, other_pop, m) {
+  
+  #function takes in two initial populations and generates 
+  #two new ones with parent choosing algorithm 
+  
+  p_own_pop = 1 - m
+  parent_choice = rbinom(length(own_pop), 1, p_own_pop)
+  
+  own_pop[which(parent_choice == 1)] = sample(own_pop, 
+                                           length(which(parent_choice ==1)),
+                                           replace = TRUE)
+  own_pop[which(parent_choice == 0)] = sample(other_pop, 
+                                           length(which(parent_choice ==0)),
+                                           replace = TRUE)
+  
+  return(own_pop)
+
+}
+
+WF_migration = function(population1, population2, m, prob_mutation) {
+  
+  #function performs a generation in WF model
+  population1 = parent_choosing(population1, population2, m)
+  population2 = parent_choosing(population2, population1, m)
+  
+  population1 = sapply(population1, function(x) mutation(x, prob_mutation))
+  population2 = sapply(population2, function(x) mutation(x, prob_mutation))
+  
+  return(list(population1, population2))
+
+}
+
+```
+
+```{r}
+estimate_Fst = function(whole_population) { 
+  
+  #Function takes in both populations and return Fst estimate
+  k_within1 = get_k(whole_population[[1]])
+  k_within2 = get_k(whole_population[[2]])
+  k_within = mean(c(k_within1, k_within2))
+  
+  k_total = get_k(unlist(whole_population, recursive = F))
+  
+  Fst = (k_total - k_within) / k_total #calculate Fst
+  
+  return(Fst)
+  
+}
+
+my_Fsts = vector(mode = "list", length = 100)
+
+for (ii in 1:100) { 
+  pop1 = vector(mode = "list", length = population_size)
+  pop2 = vector(mode = "list", length = population_size)
+
+  my_list = WF_migration(pop1, pop2, p_choose_between, p_mutation)
+
+  for (i in 1:generations) { 
+    my_list = WF_migration(my_list[[1]], my_list[[2]], 
+                         p_choose_between, p_mutation)
+  
+  }
+  my_Fsts[[ii]] = estimate_Fst(my_list) #sample 1000 pairs
+}
+
+hist(unlist(my_Fsts), col = "cornflowerblue", main = "Fst for 100 trials",
+     xlab = "Fst")
+abline(v = mean(unlist(my_Fsts)), lwd = 3)
+
+```
+
+```{r Vary m values for Fst calculation}
+
+m_values = seq(0.001, 0.1, 0.002) #range of values for mu 
+
+my_fsts = rep(0, length(m_values)) #empty vector for Fst values
+
+for (ii in 1:length(m_values)) { #for each mu value
+  my_list = WF_migration(pop1, pop2, m_values[ii], p_mutation) #do the first gen
+
+  for (i in 1:generations) { 
+    my_list = WF_migration(my_list[[1]], my_list[[2]], 
+                         m_values[ii], p_mutation) #follow through for 1000 gens
+  }
+  
+  my_fsts[ii] = estimate_Fst(my_list)   #estimate Fst value
+  
+}
+
+kjk
+
+```
+
+```{r}
+plot(m_values, my_fsts, col = "blue", type = "l",
+     xlab = "M values", ylab = "Fst", 
+     main = "Fst variation with m values")
+```
+```{r Gene fitness simulation}
+# Question 3
+
+n_genes = 1000                                  #number of genes in organism 
+n_population = 100                              #number of organisms
+fitness_values = abs(rexp(n_genes, rate = 100)) #fitness values for genes
+current_states = sample(c(0,1), n_genes, replace = TRUE)
+iterations = 500000
+
+prob_fixation = function(fitness, N) {
+  #function determines probability of gene fixating
+  numerator = 1 - exp(-2*fitness)
+  denominator = 1 - exp(-2*N*fitness)
+  
+  prob = numerator / denominator
+  
+  return(prob) #returns probability
+}
+
+select_gene_mutation = function(states, fitnesses, N) {
+  #function selects a gene to mutate and determines if 
+  #it will fix
+  chosen_gene = sample(1:length(states), 1) #choose a gene to mutate
+  associated_fitness = fitnesses[chosen_gene] #find absolute fitness value 
+  #determine sign of fitness value
+  
+  new_fitness = ifelse(states[chosen_gene] == 1, 
+                       -associated_fitness, associated_fitness)
+  
+  #will it fix? 
+  if (rbinom(1,1,prob_fixation(new_fitness, N)) == 1) {
+    #if the probability is true
+    #change the state
+    states[chosen_gene] = ifelse(states[chosen_gene] == 1, 0, 1)
+    return(states) #and return the new current states
+    
+  } else {
+    return(states) #otherwise, change nothing
+  }
+}
+
+f = 500
+genes_in_state_1 = vector(mode = "list", length = iterations/f)
+fit_nochange = vector(mode = "list", length = iterations/f)
+ii = 1
+for (i in 1:iterations) {
+  
+  current_states = select_gene_mutation(current_states, 
+                                        fitness_values, n_population)
+  if (i %% f == 0) {
+    fit_nochange[[ii]] = fitness_values[which(current_states == 1)]
+    genes_in_state_1[[ii]] = length(which(current_states == 1))
+    ii = ii + 1
+  }
+  
+}
+
+
+```
+
+
+```{r Change in the environment}
+
+change_environment = function(rate_change, iterations, fitnesses, f) {
+  
+  new_states = vector(mode = "list", length = iterations/f)
+  all_p_change = vector(mode = "list", length = iterations/f)
+  fixed_fitnesses = vector(mode = "list", length = iterations/f)
+  new_current_states = sample(c(0,1), n_genes, replace = TRUE)
+  ii = 1
+  for (i in 1:iterations) {
+  
+    current_p_change = rbinom(1,1,rate_change)
+
+    if (current_p_change == 1) {fitnesses = -1 * fitnesses} 
+  
+    new_current_states = select_gene_mutation(new_current_states, 
+                                        fitnesses, n_population)
+  
+    if (i %% f == 0) {
+      
+      all_p_change[[ii]] = current_p_change
+      new_states[[ii]] = new_current_states
+      fixed_fitnesses[[ii]] = fitnesses[which(new_current_states == 1)]
+      ii = ii + 1
+    }
+    
+    
+  }
+  
+  
+  new_genes_in_states_1 = sapply(new_states, function(i) length(which(i == 1)))
+
+  plot(1:length(new_genes_in_states_1),new_genes_in_states_1, type = "l",
+      xlab = "Generations", ylab = "Genes in state 1",
+      main = paste("Genes in state 1 with change rate =",rate_change), col = "purple")
+
+  
+  return(list(fixed_fitnesses, all_p_change))
+  
+}
+
+```
+
+
+```{r Plot genes in state 1, fig.height=7, fig.width=10}
+
+par(mfrow = c(2,2))
+
+plot(1:length(genes_in_state_1), unlist(genes_in_state_1), type = "l",
+     xlab = "Generations", ylab = "Genes in state 1 - no env. change",
+     main = "Genes in state 1", col = "purple")
+
+p_env = 1e-4
+stats_change_env = change_environment(p_env, iterations, fitness_values, f)
+
+p_env_1 = 1e-3
+stats_change_env_1e3 = change_environment(p_env_1, iterations, fitness_values, f)
+
+p_env_2 = 1e-2
+stats_change_env_1e2 = change_environment(p_env_2, iterations, fitness_values, f)
+
+
+```
+
+
+```{r Plot fitness distribution}
+
+
+my_fit1 = density(unlist(fit_nochange))
+my_fit2 = density(abs(unlist(stats_change_env[[1]])))
+my_fit3 = density(abs(unlist(stats_change_env_1e3[[1]])))
+my_fit4 = density(abs(unlist(stats_change_env_1e2[[1]])))
+
+
+plot(my_fit4, col = "orange", main = "Fitness of fixed mutations", 
+     xlab = "Fitness scores",lwd = 2)
+
+lines(my_fit2, col = "cornflowerblue",lwd = 2)
+
+lines(my_fit3, col = "seagreen",lwd = 2)
+
+lines(my_fit1, col = "purple",lwd = 2)
+
+legend(0.07, 95, legend = c("No env. change","P = 0.0001","P = 0.001","P = 0.01"),
+       col = c("purple","cornflowerblue","seagreen","orange"), lty = 1, lwd = 2)
+
+```
+
+```{r Download tree data}
+
+#Question 4
+
+setwd("/Users/carolinaierardi/Documents/Cambridge/Lent/PopulationGenetics")
+tree_data = read.csv("tree_data.txt", sep = " ", header = F)
+colnames(tree_data) = c("Node", "Daughter1", "Length1", "Daughter2","Length2")
+
+```
+
+```{r Program to calculate nodes and leaves}
+
+find_nodes_leaves = function(tree_df) {
+  
+  #Takes in data named with nodes and daughter nodes 
+  #outputs how many leaves and nodes each one has
+  
+  tree_nodes = tree_df %>% 
+  select(Node, Daughter1, Daughter2)
+
+
+  all_nodes = unique(c(tree_nodes$Node, 
+                     tree_nodes$Daughter1, 
+                     tree_nodes$Daughter2))
+
+  noD1 = all_nodes[!all_nodes %in% tree_nodes$Daughter1]
+  noD2 = all_nodes[!all_nodes %in% tree_nodes$Daughter2]
+  root_node = intersect(noD1, noD2)
+
+  leaves = all_nodes[!all_nodes %in% tree_data$Node]
+  num_nodes = rep(0,nrow(tree_nodes))
+  num_leaves = rep(0, nrow(tree_nodes))
+
+  #check for nodes only connected to leaves
+  for (i in 1:nrow(tree_nodes)) {
+      if (all(tree_nodes[i,2:3] %in% leaves) == TRUE) { 
+        num_leaves[i] = 2
+      } 
+  }
+
+#check for nodes only connected to nodes only connected to leaves
+  for (i in 1:nrow(tree_nodes)) {
+    if (all(tree_nodes[i,2:3] %in% tree_nodes[which(num_leaves == 2),1])) {
+        num_leaves[i] = 4
+        num_nodes[i] = 2
+      }
+  }
+# check for nodes connected to one leaf and one node
+  for (i in 1:nrow(tree_nodes)) {
+    if (length(which(tree_nodes[i,2:3] %in% tree_nodes[,1] == T)) == 1) {
+        ind = which(tree_nodes[,1] %in% tree_nodes[i,2:3])
+        num_leaves[i] = 1 + num_leaves[ind]
+        num_nodes[i] = 1 + num_nodes[ind]
+
+      }
+  }
+#now the remaining nodes excluding the root node
+  for (i in 1:nrow(tree_nodes)) {
+    if (i != which(tree_nodes[,1] == root_node) & num_leaves[i] == 0) {
+      ind1 = which(tree_nodes[,1] == tree_nodes[i,2])
+      ind2 = which(tree_nodes[,1] == tree_nodes[i,3])
+    
+      num_leaves[i] = num_leaves[ind1] + num_leaves[ind2]
+      num_nodes[i] = 2 + num_nodes[ind1] + num_nodes[ind2]
+  }
+} 
+
+
+#finally, find the root node numbers
+  root_ind = which(tree_nodes[,1] == root_node)
+
+  node1 = which(tree_nodes[,1] == tree_nodes[root_ind,2])
+  node2 = which(tree_nodes[,1] == tree_nodes[root_ind,3])
+
+  num_leaves[root_ind] = num_leaves[node1] + num_leaves[node2]
+  num_nodes[root_ind] = num_nodes[node1] + num_nodes[node2] + 2
+
+  new_tree_df = tree_df %>% 
+    add_column("Internal nodes" = num_nodes, "Leaves" = num_leaves)
+  
+  return(new_tree_df)
+
+  
+}
+
+```
+
+```{r}
+
+final_tree_df = find_nodes_leaves(tree_data)
+
+```
+
+```{r Program for tree lengths}
+
+tree_nodes = tree_data %>% 
+  select(Node, Daughter1, Daughter2)
+
+all_nodes = unique(c(tree_data$Node, 
+                     tree_data$Daughter1, 
+                     tree_data$Daughter2))
+
+noD1 = all_nodes[!all_nodes %in% tree_nodes$Daughter1]
+noD2 = all_nodes[!all_nodes %in% tree_nodes$Daughter2]  
+root_node = intersect(noD1, noD2)
+
+leaves = all_nodes[!all_nodes %in% tree_data$Node]
+
+lengths = rep(0, length(leaves))
+
+for (i in 1:length(leaves)) {
+  #find where the leave is located in the tree
+  bottom_tree = which(tree_nodes[,2:3] == leaves[i], arr.ind = TRUE)
+  #compute length to nearest internal node
+  my_length = tree_data[bottom_tree[1],2*bottom_tree[2]+1]
+  #compute which is the next node
+  node = tree_nodes[bottom_tree[1],1]
+  #find where the node is located
+  node_loc = which(tree_nodes[,2:3] == node, arr.ind = TRUE)
+  
+  while(node != root_node) {
+    my_length = my_length + tree_data[node_loc[1],2*node_loc[2] + 1]
+    node = tree_nodes[node_loc[1],1]
+    node_loc = which(tree_nodes[,2:3] == node, arr.ind = TRUE)
+  }
+  lengths[i] = my_length
+}
+
+cat(lengths,": if all these numbers are the same then the tree is consistent with an evolutionary tree. ")
+
+```
+
+```{r MLE function}
+
+find_likelihood = function(sequence, tree_info, my_matrix, mu) { 
+  
+  #function returns likelihood for a given tree, sequence and mu 
+  
+    #initialise a matrix with probabilites at for every node/leaf in tree
+    #for each state
+    node_states = matrix(0, nrow = max(tree_info$Node), ncol = 4)
+    colnames(node_states) = c("A","T","G","C")
+  
+    #for each possible state, assign probabilities to leaves 
+    for (names in colnames(node_states)) {
+      node_states[which(sequence == names),names] = 1
+    }
+    
+    #determine the order the nodes will be computed in
+    order_of_nodes = tree_info$Node[order(tree_info$Leaves)]
+    root_node = tail(order_of_nodes,1) #find root node
+
+  for (tips in order_of_nodes) { #for each node in the vector
+    chosen_tip = tips            #variable with the node
+  #find the information for that node
+    chosen_tip_dat = tree_info[which(tree_info$Node == chosen_tip),]
+  
+  #find left and right node matrix for the given node
+    left_node = expm::expm(mu * my_matrix * chosen_tip_dat$Length1)
+    right_node = expm::expm(mu * my_matrix * chosen_tip_dat$Length2)
+
+    p_state = matrix(0, nrow = 1, ncol = 4) #initialise p_state mat for node
+    
+    for (i in 1:ncol(node_states)) {
+    #for each state, multiply the other probabilities by the information for left and right node
+       p_state[i] = (node_states[chosen_tip_dat$Daughter1,] %*% left_node[i,]) *
+      (node_states[chosen_tip_dat$Daughter2,] %*% right_node[i,]) 
+  
+    }
+    
+  node_states[tips,] = p_state #add this to main matrix
+  }
+  #return likelihood for whole tree
+  overall_likelihood = sum(node_states[root_node,] * 1/4)
+  return(overall_likelihood)
+}
+
+```
+
+
+```{r}
+
+observed_sequence = c("A", "C", "A", "G", "G", "A", "T", "C", "A", "T")
+
+# Define the Jukes-Cantor model with row and column names
+jc_matrix = matrix(c(-3/4, 1/4, 1/4, 1/4, 
+                      1/4, -3/4, 1/4, 1/4, 
+                      1/4, 1/4, -3/4, 1/4, 
+                      1/4, 1/4, 1/4, -3/4), 
+                    nrow = 4, ncol = 4)
+
+mutation_rates = seq(0.01, 1, by = 0.01)
+
+likelihoods = sapply(mutation_rates, function(mu)
+  find_likelihood(observed_sequence, final_tree_df, jc_matrix, mu))
+
+max_likelihood_index = which.max(likelihoods)
+max_likelihood_mu = mutation_rates[max_likelihood_index]
+max_likelihood = likelihoods[max_likelihood_index]
+log(max_likelihood)
+
+plot(mutation_rates, log(likelihoods), type = "l", xlab = "Mutation rate (mu)", 
+     ylab = "Log Likelihood", main = "Log Likelihood vs Mutation Rate")
+
+# Add maximum likelihood point to the plot
+points(max_likelihood_mu, log(max_likelihood), col = "red")
+text(max_likelihood_mu, log(max_likelihood), labels = paste(round(max_likelihood_mu, 2)), 
+     pos = 4, col = "red")
+
+```
+
+```{r}
+
+seq = c("A","A","A","T","T","T","C","C","G","G")
+likelihoods = sapply(mutation_rates, function(mu) 
+    find_likelihood(seq,final_tree_df,jc_matrix, mu))
+
+# Find maximum likelihood value of mu
+max_likelihood_index = which.max(likelihoods)
+max_likelihood_mu = mutation_rates[max_likelihood_index]
+max_likelihood = likelihoods[max_likelihood_index]
+log(max_likelihood)
+
+seq = c("T","G","C","A","T","G","C","A","T","G")
+
+likelihoods = sapply(mutation_rates, function(mu) 
+    find_likelihood(seq, final_tree_df, jc_matrix, mu))
+
+# Find maximum likelihood value of mu
+max_likelihood_index = which.max(likelihoods)
+max_likelihood_mu = mutation_rates[max_likelihood_index]
+max_likelihood = likelihoods[max_likelihood_index]
+log(max_likelihood)
+
+
+seq = c("T","T","T","T","T","T","T","T","T","T")
+
+likelihoods = sapply(mutation_rates, function(mu) 
+    find_likelihood(seq, final_tree_df, jc_matrix, mu))
+
+# Find maximum likelihood value of mu
+max_likelihood_index = which.max(likelihoods)
+max_likelihood_mu = mutation_rates[max_likelihood_index]
+max_likelihood = likelihoods[max_likelihood_index]
+log(max_likelihood)
+
+
+```
+
+```{r Q4D repeat 1000 times}
+#randomly assign new leaf values
+N = 1000
+random_leaf_vals = vector(mode='list', length=N)
+max_like_mu = vector(mode='list', length=N)
+
+for (n in 1:N) {
+  
+  new_leaf_vals = sample(c("A","C","G","T"), 10, replace = TRUE)
+
+  likelihoods = sapply(mutation_rates, function(mu) 
+    find_likelihood(new_leaf_vals,final_tree_df,jc_matrix, mu))
+
+# Find maximum likelihood value of mu
+  max_likelihood_index = which.max(likelihoods)
+  max_likelihood_mu = mutation_rates[max_likelihood_index]
+  max_likelihood = likelihoods[max_likelihood_index]
+
+  max_like_mu[[n]] = max_likelihood_mu
+}
+
+```
+
+
+```{r Plot 1000 times}
+
+mu_plot = density(unlist(max_like_mu))
+hist(unlist(max_like_mu), main = "Distribution of mu MLEs for 1000 random assignments",
+     xlab = "mu MLEs", col = "coral", probability = T)
+lines(mu_plot, lwd = 2)
+abline(v = mean(unlist(max_like_mu)))
+
+```
+
+
+```{r Function for two parent WF}
+
+# Question 5
+
+two_parent_generation = function(child_generation) {
+  
+  pop_size = length(child_generation)                         #obtain population size
+  parent_generation = vector(mode='list', length = pop_size) #empty list for parents
+  #choose parents for the whole population
+  chosen_parents = sample(1:pop_size, 2*pop_size, replace = TRUE)
+  
+  child = 1 #variable to keep track of child
+  
+  for (i in seq(1,length(chosen_parents),2)) { #go in steps of two because 
+    #each individual chooses one parent
+    
+    parent_generation[c(chosen_parents[i],chosen_parents[i+1])] = lapply(parent_generation[c(chosen_parents[i],chosen_parents[i+1])], 
+      function(x) sort(unique(append(x, child_generation[[child]]))))
+    
+    child = child + 1
+  }
+
+  return(parent_generation)
+}
+
+find_T_and_U = function(population_size) {
+  
+  last_g = seq(1,population_size) #compute last generation
+  parents = two_parent_generation(last_g) #perform one iteration of algorithm
+  T_gen = list() #empty list for T values
+  U = list()
+  
+  for (i in 1:500) { #only do 50 generations as it won't go over this
+  parents = two_parent_generation(parents) #compute next generation
+  
+  if (any(sapply(1:length(parents), 
+                 function(x) all(last_g %in% parents[[x]])))) {
+    #if there is one individual who is the ancestor of all present-day individuals
+    #add iteration to list
+    T_gen = append(T_gen, i + 1)
+    
+  }
+  
+  if (all(sapply(1:length(parents),
+                     function(x) length(parents[[x]]) == population_size | 
+                                 length(parents[[x]]) == 0))) {
+    #if all ancestors either are the common ancestor of all individuals or
+    #ancestor of no present-day individuals
+    U = append(U, i + 1)
+     #set this value as U 
+    break #break loop
+    }
+  }
+
+  return(c(min(unlist(T_gen)),unlist(U))) #we want the first iteration for T and U
+} 
+
+
+```
+
+
+```{r Two parent WF simulation}
+
+my_Ns = seq(10, 1000, 10)
+two_parent_stats = lapply(my_Ns, function(n) find_T_and_U(n))
+saveRDS(two_parent_stats, file = "q5_TandU.rds")
+
+two_parent_stats = readRDS("q5_TandU.rds")
+
+Ts = unlist(sapply(two_parent_stats, `[`, 1))
+Us = unlist(sapply(two_parent_stats, `[`, 2))
+
+Tmodel = lm(Ts ~ log(my_Ns))
+Umodel = lm(Us ~ log(my_Ns))
+
+yT = predict(Tmodel,newdata=list(x=my_Ns),
+          interval="confidence")
+yU = predict(Umodel,newdata=list(x=my_Ns),
+          interval="confidence")
+
+x = 8 * 10^9
+T_8bi = Tmodel$coefficients[2]*log(x) + Tmodel$coefficients[1]
+U_8bi = Umodel$coefficients[2]*log(x) + Umodel$coefficients[1]
+
+
+plot(my_Ns, Ts, type = "l", col = "red", 
+     main = "Two parent Wright-Fisher model", ylim = c(0,30), xlab = "N",
+     ylab = "T and U values")
+lines(my_Ns, Us, col = "blue")
+legend(0, 30, legend = c("T","U"),col = c("red","blue"), lty = 1)
+# abline(Tmodel)
+# abline(Umodel)
+matlines(my_Ns,yT, lwd = 2)
+matlines(my_Ns, yU, lwd = 2)
+
+
+
+```
+
+
+```{r Individuals genetic material}
+
+chromossomes = 22
+both_parents = c(chromossomes,chromossomes)
+
+split_parents = function(current_material) { 
+  #function that splits each genetic material in two random parts
+  #returns the split array
+  splits = sapply(current_material, function(ind){
+    s = sample(1:ind, 1)
+    return(c(s, ind-s))
+  })
+  return(splits)
+}
+
+find_S = function(first_parents) {
+  
+  my_split = split_parents(first_parents) #split the parents first
+
+  if(any(my_split == 0)) { #if the first split returns someone with no genetic material...
+    return(2)                            #stop the function
+  } else {                               #otherwise continue
+    for (i in 1:10) {                    #i won't be bigger than 6 but let's use 10
+      my_split = split_parents(my_split) #apply the function to the current gen
+      if(any(my_split == 0)) {           #if someone contributed no genetic material
+        return(i + 2)                    #the S is i + 1 (one gen already computed)
+        break                            #stop function
+        }
+      }
+    }
+
+}
+
+
+S_gens = sapply(1:1000000, function(i) find_S(both_parents))
+
+hist(S_gens, xlab = "Generations", 
+     main = "Generations to no genetic material", xaxt = "n", col = "purple")
+axis(1, at = seq(1,7))
+
+
+```
+```{r Probabilities of each S}
+
+unique_S = sort(unique(S_gens))
+
+p_S = sapply(unique_S, function(s) length(which(S_gens == s))/length(S_gens))
+
+barplot(p_S, names.arg = unique_S, col = "cornflowerblue", 
+        main = "Probability of each S", xlab = "S", ylab = "Probability")
+```
+
+```{r ref.label=knitr::all_labels(), include = T,echo = T, eval = F}
+```
+

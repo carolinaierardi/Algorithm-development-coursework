@@ -1,0 +1,667 @@
+---
+title: "spa3_500829"
+author: '500829'
+date: "2024-01-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = TRUE, cache = TRUE)
+```
+
+# Travelling Salesman Problem
+
+The Travelling Salesman Problem (TSP) refers to finding the shortest distance between a series of cities on a "tour". Although simple to explain, finding a solution by hand can be very difficult. Therefore, many optimisation techniques have been used to find the optimal distance for these problems. Because many solutions to different TSP are known, the optimisation techniques can be "tested" on these datasets. 
+
+Here, we compare two optimisation techniques, simulated annealing and genetic algorithms, by applying them to TSP where the optimal solution is already known. The simulated annealing optimisation is based on the natural annealing temperature of processes. Briefly, a) a random tour through the cities is selected and its distance is calculated, then b) a neighbouring tour to the aforementioned tour is picked. This is done by selecting a portion of the tour, a subtour, and inverting the order of the cities in that subtour. c) If the distance of the new tour (b) is shorter than the original tour (a), the new tour is our new candidate solution. d) Nonetheless, if the distance in the new tour (b) is still greater than the original tour (a), it may be accepted as the candidate solution with a probability according to the annealing temperature (T).  
+                $$ p = exp(-(distance_{b} - distance_{a})/T)$$
+As such, the larger the difference in the values, the less likely it is to accept the worse tour and the higher the annealing temperature, the more likely it is to accept the worse tour. As the iterations increase, T decreases according to  $\alpha = 0.9$. This way, the algorithm prefers exploration in the earlier iterations and exploitation in the later ones, avoiding getting stuck in a local minima. Importantly, the initial annealing temperature is set to be in scale with the average difference in distance between two random tours. We chose a fixed value of 10,000 iterations. A more detailed visualisation and explanation can be found [here](https://toddwschneider.com/posts/traveling-salesman-with-simulated-annealing-r-and-shiny/#salesman-app). 
+
+On the other hand, genetic algorithms are based on the natural selection properties found in nature. Generally, an random initial population is generated and each individual's fitness determined. In this case, the distance is the fitness. The parents of such population are selected based on the individuals with best fitness scores. Offspring for these parents are produced with a probability near 0 that they will mutate. The population is extended if the offspring have better fitness than the worse individuals of the inital population, and the said individuals are removed from the population so it maintains the same size. 
+
+As many variations of these algorithms exist, we chose one crossover algorithm names "Order Crossover"(OX1) to generate the offspring and the displacement mutation (DM) to generate the mutation. These algorithms were chosen both for their simplicity but also because in a comparison across many operations for genetic algorithms for the TSP (Larranaga et al., 1999), both these methods were amongst the best and fastest ones to use. Briefly, OX1 uses two parents and selects a subset of the tour, the same positions in each parent. These subtours are maintained the same in the two offspring. The parts outside the subtour are then inherited from the other parent in the order the cities appear, removing the cities already contained in the subtour. A more detailed explanation can be found in Larranaga et al. (1999). Moreover, the displacement mutation occurs when a portion of the offspring is selected and deleted from the tour. It is then added after another random position from the reduced tour. 
+
+The genetic algorithm we used was similar to the one used in Larranaga et al. (1999), as it showed results close to the real optimum. Specifically, the population size was set to 200. The parents were selected with a rank selection. This means once the fitness for all individuals was calculated, their quality was ranked and the probability with which an individual would be chosen as a parent is proportional to how well it was ranked amongst the rest of the population. A parameter $sp = 1.9$ was used, meaning that the higher ranked individuals had a probability 1.9 times higher than an average individual to be a parent. The equation follows
+$$
+      P_{parents}(i) = \frac{1}{n}(sp - (2sp - 2)\frac{i - 1}{n - 1}),\quad
+                   1 < sp \le 2\quad 1 < i \le n 
+$$
+The offspring were generated according to OX1 and mutated with a probability $P_{m} = 0.01$ according to DM. The offspring with the best fitness score would replace the worse individual in the population, if the new fitness score was better. The algorithm would stop if the average fitness score for the population remained the same for 1,000 iterations and would go beyond no more than 50,000 iterations. 
+
+Both algorithms were applied where the optimal solution for symmetric travelling salesman problems were known. Such solutions can be found [here](http://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/tsp/). The solutions are shown below. Each algorithm was performed 10 times and the one with the best solution is plotted. 
+
+```{r SA functions, include=FALSE, echo=FALSE}
+## Simulated annealing functions
+total.distance = function(x,mat) {
+  #for a random tour, calculate the distance to perform it
+  dists = rep(0, length(x))     #empty vector for distances between cities
+  for (i in 1:(length(x)-1)) {  #for each element in the vector
+    dists[i] = mat[x[i],x[i+1]] #compute distance in the matrix
+  }
+  dists[length(dists)] = mat[x[length(x)], x[1]] #distance to go back to initial distance
+  
+  return(sum(dists))            #return sum of the vector
+}
+
+find.neighbour = function(x) {
+  #given a tour, find one of its neighbours
+  #create this by flipping the cities between two random points
+  samp = sample(x, 2) #take two numbers at random from sample
+  x2 = x              #create copy of initial vector
+  #invert cities in between the two points
+  x2[min(samp):max(samp)] = x[max(samp):min(samp)]
+  return(x2)          #return new vector
+}
+
+find_prob = function(dist1, dist2, temp) {
+  #define probability of choosing new tour
+  p = exp(-(dist1-dist2)/temp)
+  return(p)
+}
+
+update_temp = function(oldtemp, alpha) {
+  #update temperature
+  alpha*oldtemp
+}
+
+one.iter = function(mat) {
+  #one random iteration for initial temperature generation
+  tour = sample(nrow(mat), nrow(mat), replace = FALSE)
+  dis = total.distance(tour,mat)
+  return(dis)
+}
+
+init_temp = function(mat, p0) {
+  
+  #define initial temperature
+  #this should have same scale as difference in tours
+  sa = sapply(1:100, function (x) one.iter(mat)) #for 100 random samples
+  sb = sapply(1:100, function (x) one.iter(mat)) #compare to 100 random samples
+  delta_f0 = mean(abs(sa - sb))                #find average difference
+  Tmax = -delta_f0/log(p0)                     #define initial temperature
+  return(Tmax)
+}
+
+compare_tours = function(current_tour, dist_mat, temperature) {
+  #given a tour and a distance matrix and temperature
+  # inform the distance and tour to be used next
+  
+  current_dist = total.distance(current_tour, dist_mat) #obtain distance for tour
+  new_tour = find.neighbour(current_tour)       #find a neighbour for the tour
+  new_dist = total.distance(new_tour, dist_mat) #find distance for new neighbour
+  if (new_dist < current_dist) {                #if new distance is less than old
+    return(c(new_tour, new_dist)) #return new tour and new distance
+  } else {
+    p = find_prob(new_dist, current_dist, temperature) #find probability
+    if (p > runif(1)) {                  #if probability higher than random value
+      tour = new_tour                    #take new tour
+    } else {tour = current_tour}         #take old tour
+    dis = total.distance(tour, dist_mat) #obtain distance for chosen tour
+    return(c(tour,dis))                  #return tour and distance
+  }
+}
+
+annealing = function(dist_mat, temperature, alpha = 0.9, iterations = 10000) {
+
+    #performs simulated annealing process
+  initial_tour = sample(nrow(dist_mat), nrow(dist_mat), 
+                        replace = FALSE)                #create initial tour
+  distance_evolution = list()                           #empty list for 
+  solution = compare_tours(initial_tour, dist_mat, 
+                           temperature)                 #first comparison
+  current_tour = head(solution, -1)                     #obtain tour
+  current_distance = tail(solution, 1)                  #obtain distance
+  distance_evolution = append(distance_evolution, 
+                              current_distance)         #add to list
+  newtemp = update_temp(temperature, alpha)             #decrease first temperature
+  count = 1                                             #count initialisation
+  
+  while (count < iterations) {                                 #until max iterations
+    solution = compare_tours(current_tour, dist_mat, newtemp) #compare the tours
+    current_tour = head(solution, -1)                         #obtain tours 
+    current_distance = tail(solution, 1)                      #obtain distance
+    distance_evolution = append(distance_evolution, 
+                                current_distance)             #add distance to list
+    newtemp = update_temp(newtemp, alpha)                     #update temperature
+    count = count + 1                                         #update counts
+  }
+  return(distance_evolution) #return distances
+}
+
+```
+
+```{r GA functions, echo=FALSE}
+## Genetic Algorithm functions
+generate.offspring = function(parent1, parent2) {
+  
+  #given the parents, generate the offspring
+  cutoffs = sample(1:(length(parent1)-1), 2)  #randomly select cutoffs
+  parents = list(parent2,parent1)         #create a list of parents (inverted)
+  offsprings = list(parent1,parent2)      #create a list for the offspring
+  for (i in 1:length(offsprings)) {       #for each offspring
+    #the preserved part is between the selected cutoffs
+    preserved.part = offsprings[[i]][min(cutoffs):max(cutoffs)]
+    #we shall insert the numbers in the other parent that 
+    #are not in the preserved part
+    #this returns the numbers already in order
+    insert = setdiff(parents[[i]], preserved.part)
+    #the first replacement is to be after the second cutoff 
+    #to the end of the vector
+    #to be replaced with the first part of the "insert" var
+    offsprings[[i]] = replace(offsprings[[i]], (max(cutoffs)+1):length(offsprings[[i]]), 
+                              insert[1:length((max(cutoffs) + 1):length(offsprings[[i]]))])
+    #the second replacement is from the start of the vector up until the first cutoff
+    #to be replaced with the remainder of the "insert" var
+    offsprings[[i]] = replace(offsprings[[i]], 1:min(cutoffs)-1, 
+                              insert[(length((max(cutoffs) + 1):
+                                               length(offsprings[[i]]))+1):length(insert)])
+    
+  }
+  return(offsprings) #return resulting offspring
+}
+
+#displacement mutation
+create.mutation = function(offspring, p) {
+  #given a probability, mutate the offspring
+  
+  if (p < runif(1)) { #if the probability is below a random value
+    return(offspring) #do not mutate
+  } else {            #begin mutation
+    selection = sample(1:length(offspring), 2)             #select positions for mutation
+    mut_portion = offspring[min(selection):max(selection)] #preserve portion
+    newoffspring = offspring                               #copy the offspring to new var
+    #remove portion
+    newoffspring = newoffspring[-(min(selection):max(selection))]
+    #select position for mutation to be added
+    position = sample(1:length(newoffspring), 1)          
+    newoffspring = append(newoffspring, mut_portion, after=position) #add mutation
+    return(newoffspring)                                    #return new offspring
+  }
+}
+
+
+select_parents = function(population, population_rank, p_b) {
+  #given the population, its rank and a probability
+  #calculates the probability of each value being selected
+  #selects the parents, given said probabilities
+  n = length(population_rank)                    #obtain size of population
+  p = rep(0, n)                                  #empty vector with probabilities
+  for (i in 1:n) {                               #for each value
+    p[i] = 1/n*(p_b - (p_b - 2)*((population_rank[i] - 1)/(n - 1))) #obtain probability
+  }
+  parents = sample(population, 2, 
+                   replace = FALSE, prob = p)    #select parents
+  return(parents)                                #return parents
+}
+
+one.generation1 = function(current_pop, dist_mat, p_m, p_b) {
+  #the process of choosing one generation
+  
+  #calculate distances for population
+  distances = sapply(current_pop, function(x) total.distance(x, dist_mat)) 
+  sorted_dist = sort(distances)                         #sort these
+  ranked_dist = rank(-distances, ties.method= "random")
+  worst_dist = sorted_dist[length(sorted_dist)]         #obtain worst distances
+  parents = select_parents(current_pop, ranked_dist, p_b)   #select parents 
+  offspring = generate.offspring(parents[[1]],parents[[2]]) #generate offspring
+  mutated_offspring = lapply(offspring, function (x) create.mutation(x, p_m))         #mutations
+  #obtain new distances
+  candidate_distances = sapply(mutated_offspring, function(x) total.distance(x, dist_mat)) 
+  
+  if (min(candidate_distances) < worst_dist) { #if these are better than the worst distances
+    
+    new_pop = current_pop[-which.max(distances)]    #eliminate worst tour
+    new_dist = distances[-which.max(distances)]     #eliminate worst distances
+    #add new tours to population
+    new_pop = append(new_pop, mutated_offspring[which.min(candidate_distances)])
+    new_dist = append(new_dist, min(candidate_distances)) #add new distances
+    return(c(list(new_pop), list(new_dist)))        #return new pop. and dist.
+  } else {
+    return(c(list(current_pop), list(distances))) #return old population and distances
+  }
+}
+
+genetic.algorithm1 = function(p_m, p_parents, dist_mat, population_size = 200, iterations = 50000) {
+  
+  #perform full genetic algorithm
+  
+  smallest_dist = list() #initialise variable 
+  average_dist = list()  #initialise variable
+  #generate first population
+  first_population = lapply(1:population_size, function (x) 
+    sample(nrow(dist_mat), nrow(dist_mat),replace = FALSE))
+  
+  #perform the first iteration of the algorithm
+  one_cycle = one.generation1(first_population,dist_mat, p_m, p_parents)
+  #add obtained average and smallest distance to lists
+  smallest_dist = append(smallest_dist, min(unlist(one_cycle[2])))
+  average_dist = append(average_dist, mean(unlist(one_cycle[2])))
+  count = 1                     #initialise iterations variable
+  while (count < iterations) {  #perform algorithm iteratively
+    next_population = one_cycle[[1]] #initialise next population
+    #perform one iteration of algorithm
+    one_cycle = one.generation1(next_population, dist_mat, p_m, p_parents)
+    #append lists
+    smallest_dist = append(smallest_dist, min(unlist(one_cycle[2])))
+    average_dist = append(average_dist, mean(unlist(one_cycle[2])))
+    count = count + 1 #add to count variable
+    #stop if algorithm converges after 1000 iterations
+    if ((count > 1000) && (length(unique(average_dist[(count-999):count])) == 1)) {
+      break #if average distance does not change for 1000 iterations
+    }
+  }
+  return(smallest_dist) #return smallest distance 
+}
+
+```
+
+## Case 1: "berlin52" - Best Solution: 7542
+```{r Set-up tour, include=FALSE, echo=FALSE}
+
+#Set up tour 1
+setwd("~/Documents/Cambridge/Michaelmas/ScientificProgramming")
+berlin = read.delim("berlin52.opt.tour") #download optimal tour
+berlindist = read.delim ("berlin52.tsp") #download euclidean dist
+
+opt.tour = as.numeric(berlin[4:55,]) 
+#define number of cities
+n_cities = as.numeric(strsplit(berlindist[3,], split = " ")[[1]][2])
+
+#transform data to obtain raw numbers
+data.weights = berlindist[6:(6 + n_cities - 1),]
+data.weights = sapply(data.weights, function(x) strsplit(x, split = " "))
+data.weights = sapply(data.weights, function(x) as.numeric(x))
+unname(data.weights)
+data.weights = sapply(data.weights, function(x) x[1:3])
+data.weights = t(data.weights)
+
+#make data into dataframe
+df = as.data.frame(data.weights)
+row.names(df) = df$V1
+df = subset(df, select = -V1)
+colnames(df) = c("coord1", "coord2")
+
+dist = function(i,j) {
+  #compute distance between two cities
+  xd = df$coord1[i] - df$coord1[j]      #distance between x coordinates
+  yd = df$coord2[i] - df$coord2[j]      #distance between y coordinates
+  dij = round(sqrt( (xd*xd) + (yd*yd))) #calculate distance
+
+  return(dij)
+}
+
+#compute distance for every two cities
+pairwise.dist = combn(n_cities, 2, function(x) fun = dist(x[1], x[2]))
+m = matrix(0, n_cities, n_cities) #create empty matrix
+
+#https://stackoverflow.com/questions/30787317/
+        #a-vector-to-an-upper-triangle-matrix-by-row-in-r
+m[lower.tri(m, diag=FALSE)] <- pairwise.dist #assign distances to distance matrix
+m = t(m) #make uppertriangle of matrix the distances
+m[lower.tri(m)] = t(m)[lower.tri(m)] #make matrix symmetric
+
+```
+
+```{r SA perform, include=FALSE, echo=FALSE}
+#Execute SA algorithm 1
+first_temp = init_temp(m,0.9) #initial temperature
+ten_solSA = lapply(1:10, function(x) annealing(m, first_temp, alpha = 0.9, iterations = 10000))
+
+best = sapply(ten_solSA, function(x) min(unlist(x)))
+toplotSA = ten_solSA[[which.min(best)]]
+```
+
+```{r GA perform, include=FALSE, echo=FALSE}
+p_mutation = 0.01
+p_selection = 1.9
+
+ten_solutions = lapply(1:10, function(x) genetic.algorithm1(p_mutation, p_selection,m))
+
+best_sol = sapply(ten_solutions, function(x) min(unlist(x)))
+toplotGA = ten_solutions[[which.min(best_sol)]]
+
+```
+
+
+```{r Plots, include=TRUE, echo=FALSE, out.width="70%",fig.align='center', fig.cap="\\label{fig:TSP1} Algorithm comparison for 'berlin52' with best solution 7542."}
+#Plot first tours  
+par(mfrow = c(1, 2)) #plot side by side 
+
+plot(seq(1,length(toplotSA),1), toplotSA, type = 'l',  #plot convergence
+     xlab = "Iterations", ylab = "Tour Distance") #x and y labels
+title(paste("Simulated annealing:\n Best solution =",min(best),
+            "\n Average solution  = ",mean(best))) #plot title 
+
+plot(seq(1,length(toplotGA),1), toplotGA, type = 'l',  #plot convergence
+     xlab = "Iterations", ylab = "Tour Distance")      #x and y labels
+title(paste("Genetic algorithm:\n  Best solution =",min(best_sol),
+            "\n Average solution = ",mean(best_sol)))  #plot title
+
+```
+
+## Case 2: "eil101" - Best Solution = 629
+```{r Data download 2, include=FALSE, echo=FALSE}
+
+#Set up tour 2
+setwd("~/Documents/Cambridge/Michaelmas/ScientificProgramming")
+eilopt = read.delim("eil101.opt.tour")
+eil = read.delim ("eil101.tsp")
+
+opt.tour = as.numeric(eilopt[5:105,])
+#define number of cities
+n_cities = as.numeric(strsplit(eil[3,], split = " ")[[1]][3])
+
+#transform data to obtain raw numbers
+data.weights = eil[6:(6 + n_cities - 1),]
+data.weights = sapply(data.weights, function(x) strsplit(x, split = " "))
+data.weights = sapply(data.weights, function(x) as.numeric(x))
+unname(data.weights)
+data.weights = t(data.weights)
+
+#make data into dataframe
+df = as.data.frame(data.weights)
+row.names(df) = df$V1
+df = subset(df, select = -V1)
+colnames(df) = c("coord1", "coord2")
+
+
+#compute distance for every two cities
+pairwise.dist = combn(n_cities, 2, function(x) fun = dist(x[1], x[2]))
+m = matrix(0, n_cities, n_cities) #create empty matrix
+m[lower.tri(m, diag=FALSE)] <- pairwise.dist #assign distances to distance matrix
+m = t(m) #make uppertriangle of matrix the distances
+m[lower.tri(m)] = t(m)[lower.tri(m)] #make matrix symmetric
+
+total.distance(opt.tour,m) #verify if optimal tour gives best distance
+#it does
+
+```
+
+```{r SA perform 2,include = FALSE, echo=FALSE}
+
+#SA tour 2
+first_temp = init_temp(m,0.9) #initial temperature
+d = lapply(1:10, function(x) annealing(m, first_temp, alpha = 0.9, iterations = 10000))
+
+best = sapply(d, function(x) min(unlist(x)))
+toplotSA = d[[which.min(best)]]
+
+```
+
+```{r GA perform 2, include=FALSE,echo=FALSE}
+p_mutation = 0.01
+p_selection = 1.9
+
+
+ten_solutions = lapply(1:10, function(x) genetic.algorithm1(p_mutation, p_selection,m))
+mins = sapply(ten_solutions, function(x) min(unlist(x)))
+toplot = ten_solutions[[which.min(mins)]]
+
+```
+
+```{r Plots 2,out.width="70%", fig.align='center', fig.cap="\\label{fig:TSP2} Algorithm comparison for tour 'eil101' with best distance 629."}
+
+#Plot tours 2
+par(mfrow = c(1, 2)) #plot side by side
+
+plot(seq(1,10000,1), toplotSA, type = 'l',        #plot convergence
+     xlab = "Iterations", ylab = "Tour Distance") #x and y labels 
+title(paste("Simulated annealing: \n Best solution =",min(best),
+            "\n Average solution =",mean(best)))  #plot title
+
+plot(seq(1,length(toplot),1), toplot, type = 'l', #plot converagence
+     xlab = "Iterations", ylab = "Tour Distance") #x and y labels
+title(paste("Genetic algorithm:\n  Best solution =",min(mins),
+            "\n Average solution = ",mean(mins))) #plot title
+
+```
+
+We can see that simulated annealing found the best result on average and overall. The runtime for this algorithm was far shorter as well (data not shown). The true optimal tour for these problems were: 7542 and 629 Km, respectively. Neither of the methods found the optimal solution, suggesting that other algorithms perform better than these. Although our results are not representative of all TSP problems, we some evidence of the higher efficiency of simulated annealing but lack of results for either problem. 
+
+
+
+# Self-Organising Maps - Kohonen Networks
+
+We aimed to build a Self-Organisng Map (SOM) to map a two-dimensional input space onto a two dimensional output space. SOMs unsupervised learning algorithm that retrain features of the input data by grouping them according to their similarity to each other. A detailed explanation can be found in Chapter 5 of Beale and Jackson (1990). Briefly, the network comprised a 2D input data and a 2D grid of neuron. The weight update is given as a function of the given inputs. It uses competitive learning to adjust its weights, meaning a single node is activated at each iteration and its weight and the neighbours' weights are updated. The node activated is the one with the smallest Euclidean difference between the input vector and the nodes. Eventually, the entire grid will match the complete input data, with similar inputs grouped together. 
+
+We chose a 6x6 input data with values from a uniform distribution and show the weight matrix after n iterations as a heatmap. The weight matrix is 36 x 6 with values also initialised from a uniform distribution. We define the neighbourhood of a node as rectangular with the center around the winning node. The learning rate and radius of neighbourhood decrease with the iterations of the algorithm. 
+
+Our outputs are shown below.
+
+```{r SOM functions}
+
+#Kohonen network functions
+define.neighbourhood = function(winner, address, radius) {
+  #given a node, define its neighbourhood
+  x = address$x[winner] #get x "coordinate" in matrix
+  y = address$y[winner] #x "coordinate"
+  
+  #the neighbours are defined by a rectangular radius and 
+  #will be the highest of 1 or the winner x coordinate - radius
+  low_bound = which(address$x == max(1, (x - radius)) & 
+                      address$y == max(1, (y - radius)))
+  
+  #the same is true for the upper bound of the neighbours
+  upp_bound = which((address$x == min(sqrt(nrow(address)), (x + radius)) &
+                       address$y == min(sqrt(nrow(address)), (y + radius))))
+  
+  return(c(low_bound, upp_bound))
+}
+
+update.weights = function(x,w, neighbours, learning_rate) {
+  #given the input data, weight matrix, neighbours and learning rate
+  #update the weights
+  for (n in neighbours[1]:neighbours[2]) {       #for all the neighbours
+  new_weight = rep(0,ncol(w))                    #initialise new weights
+  new_weight = w[n,] + learning_rate*(x - w[n,]) #weight update rule
+  w[n,] = new_weight                             #assign to weight mat
+  }    
+  return(w)
+}
+
+decay = function(current_step, max_steps, max_learning_rate, max_radius) {
+  #given the current step within the maximum steps
+  #update learning rate and radius for neighbours
+  coefficient = 1 - (current_step/max_steps)     #set coefficient
+  learning_rate = coefficient*max_learning_rate  #update learning 
+  neighbourhood_range = coefficient * max_radius #update radius
+  
+  return(c(learning_rate, ceiling(neighbourhood_range)))
+}
+
+
+one.iter = function(order, x, w, address, learning_rate, radius) {
+  #perform one iteration of the algorithm
+  d = rep(0,nrow(w))                  #initialise distance
+  for (i in 1:length(d)) {            #at each node
+    d[i] = sum((w[i,] - x[order,])^2) #find euclidean distances
+    } 
+  winner = which.min(d)                                  #find smallest distance
+  n = define.neighbourhood(winner, address, radius)      #define neighbours
+  new_w = update.weights(x[order,], w, n, learning_rate) #update weights
+  return(new_w)
+}
+
+one.epoch = function(x,w,address,learning_rate,radius) {
+  #perform one epoch of the algorithm
+  new_w = w                                           #assign variable
+  order = sample(1:nrow(x), nrow(x), replace = FALSE) #randomise order
+  for (j in order) { #for each element
+                     #perform one iteration
+    new_w = one.iter(j, x,new_w, address, learning_rate, radius)
+  } 
+  return(new_w)
+}
+
+kohonen.net = function(x, w, start_learn = 0.6, iteration = 10000, start_rad = 4) {
+  #perform full algorithm
+  #define address for the given weight mat (for neighbours)
+  address = expand.grid(x = 1:sqrt(nrow(w)), y = 1:sqrt(nrow(w)))
+  count = 1 #initialise count variable
+  new_w = one.epoch(x,w,address,start_learn,start_rad) #one epoch of algorithm
+  next_epoch = decay(count, iteration, start_learn, start_rad) #new parameters 
+  learn = next_epoch[1] #assign new learning rate
+  rad = next_epoch[2]   #assign new radius
+  
+  while (count < iteration) { #until max iterations is reached
+    
+    new_w = one.epoch(x,new_w,address,learn, rad) #one epoch
+    next_epoch = decay(count, iteration, 
+                       start_learn, start_rad)    #update params
+    learn = next_epoch[1]                         #assign learning rate
+    rad = next_epoch[2]                           #assign radius
+    count = count + 1                             #update count variable
+  }
+  return(new_w)                                   #return new weight matrix
+}
+```
+
+
+```{r SOM perform}
+x = matrix(runif(36),6,6)    #define input matrix
+w = matrix(runif(216),36,6)  #define weight matrix
+
+#row of weight matrix represents units in output
+#columns represent input nodes
+
+ww = kohonen.net(x,w,iteration = 25)   #perform 25 iterations
+ww2 = kohonen.net(x,w,iteration = 500) #500 iterations
+ww3 = kohonen.net(x,w)                 #full algorithm
+
+
+```
+
+```{r SOM plots,fig.height=3, fig.width=3, fig.cap="\\label{fig:SOMplots} Organisation of SOM weight matrix with iteration progression."}
+
+#plot outputs
+heatmap(w, Rowv = NA, Colv = NA, main = "0 iterations")
+heatmap(ww, Rowv = NA, Colv = NA, main = "25 iterations")
+heatmap(ww2, Rowv = NA, Colv = NA, main = "500 iterations")
+heatmap(ww3, Rowv = NA, Colv = NA, main = "10,000 iterations")
+
+
+```
+
+Thus, we can see as the iterations increase, the grid arranges itself such that similar nodes are grouped close together. We also attempted to plot the grid as lines, which unfortunately did not have the expected output. 
+
+```{r SOM lines, out.width="70%", fig.cap="\\label{fig:SOMlines} Weight matrix as lines."}
+par(mfrow = c(2, 2))
+plot(w, type = "l",ylab="",yaxt="n",
+     xlab="",xaxt="n",
+     main = "0 iterations")
+plot(ww,type = "l", ylab="",yaxt="n",
+    xlab="",xaxt="n",main = "25 iterations")
+plot(ww2, type = "l", ylab="",yaxt="n",
+     xlab="",xaxt="n",main = "500 iterations")
+plot(ww3, type = "l", ylab="",yaxt="n",
+     xlab="",xaxt="n",main = "10,000 iterations")
+
+```
+
+
+# Image Compression
+
+We next wished to use unsupervised learning algorithms to perform image compression. Our initial goal was to implement a version of Kohonen Networks to perform image compression. However, due to time constraints and uncertainty of our implementation above we chose k-means clustering, another unsupervised learning algorithm, to perform image compression. Although the algorithms are similar, SOMs have a few advantages regarding image compression. While K-means clustering does not work well with high-dimensional data, such as pixels, SOMs are able to map high-dimensional inputs onto low-dimensional spaces still preserving the dataset's topology, which is essential for image compression. 
+
+Thus, we compare k-means clustering with Singular Value Decomposition (SVD) for image compression. We decompose the image into red, green and blue matrices and visualise a single matrix (blue) as an image for simplicity.  
+
+## SVD
+
+For SVD, we used code from (White, 2009). 
+```{r SVD implementation, echo=FALSE, include=FALSE}
+#https://www.johnmyleswhite.com/notebook/2009/12/17/
+#image-compression-with-the-svd-in-r/
+
+library('pixmap') #library pixmap
+setwd("~/Documents/Cambridge/Michaelmas/ScientificProgramming") #set working dir
+image = read.pnm("homerton.ppm") #load image
+
+#obtain red, green and blue matrices for the image
+red.matrix <- matrix(
+    image@red,
+    nrow = image@size[1],
+    ncol = image@size[2]
+)
+green.matrix <- matrix(
+    image@green,
+    nrow = image@size[1],
+    ncol = image@size[2]
+)
+blue.matrix <- matrix(
+    image@blue,
+    nrow = image@size[1],
+    ncol = image@size[2]
+)
+
+```
+
+The original image: 
+```{r Plot original SVD, out.width="70%", fig.align='center'}
+#plot original image
+image(blue.matrix, col = topo.colors(255))
+
+```
+```{r Naming elements SVD}
+#perform svd on the blue matrix
+blue.matrix.svd <- svd(blue.matrix)
+d <- blue.matrix.svd$d
+u <- blue.matrix.svd$u
+v <- blue.matrix.svd$v
+
+```
+
+The compressed images:
+```{r SVD plots, fig.align='center', fig.cap="\\label{fig:SVDplots}SVD image compression"}
+#plot SVD with different SVs
+par(mfrow = c(2,3))
+
+for (i in c(2, 4, 5, 10, 20, 30)) {
+	blue.matrix.compressed <- u[,1:i] %*% diag(d[1:i]) %*% t(v[,1:i])
+	image(blue.matrix.compressed, col = topo.colors(255))
+	title(paste(i, "Singular Values"))
+}
+
+```
+
+In Figure \ref{fig:SVDplots} we can see as the singular values increase, the image becomes less blurry and clearer. 
+
+## K-means clustering
+
+We used R's built-in k-means function to visualise the compressed images. 
+```{r, fig.cap="\\label{fig:Kplots}K-means clustering for image compression", fig.align='center'}
+#K means clusters
+kClusters <- c(2,4,5,10,20,30) #iterate over these clusters
+par(mfrow = c(2,3))            #set up plot image
+
+for (i in kClusters) {                             #for each cluster
+  kMeans <- kmeans(blue.matrix, centers = i)       #perform k-means
+  kColours <- rgb(kMeans$centers[kMeans$cluster,]) #assign colors
+  #map to topo.colours for better visualisation
+  map = setNames(topo.colors(length(unique(kColours))), unique(kColours))
+  kColours[] = map[kColours]         #map
+  image(blue.matrix, col = kColours) #plot image
+  title(paste(i, "Clusters"))
+
+}
+
+```
+
+In contrast to SVD, Figure \ref{fig:Kplots} shows that rather than becoming clearer, as the number of clusters becomes larger, more colours are used in the image, making each "cluster" more distinguishable. We can see that both images are further compressed when the singular values and K- values are lower. However, when values for both algorithms are low, we have a clearer representation when using the K-means algorithm. Interestingly, although not shown here, when the number of clusters increases too much, the colours can be lost and not visible to the human eye, creating a psycho-visual redundancy (Gomathi and Aparna, 2020).
+
+# References
+
+Beale, R. and Jackson, T. (1990). Neural Computing - An Introduction. CRC Press.
+
+Gomathy, R. and Aparna, R. (2020) A Comparative Analysis of Image Compression Techniques: K Means Clustering and Singular Value Decomposition. ICTACT Journal on Soft Computing, 10(4):2160-2164. DOI: 10.21917/ijsc.2020.0307
+
+Larranaga, P., Kuijpers, C. M. H., Murga, R. H., Inza, I., and Dizdarevic, S. (1999). Genetic algorithms for the travelling salesman problem: A review of representations and operators. Artificial
+Intelligence Review, 13(2):129–170.
+
+White, J. M. (2009). Image compression with the SVD in R. [http://www.johnmyleswhite.com/
+notebook/2009/12/17/image-compression-with-the-svd-in-r/].
+
+# Appendix
+
+```{r ref.label=knitr::all_labels(), include = T,echo = T, eval = F}
+```
+
