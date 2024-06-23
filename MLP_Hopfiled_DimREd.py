@@ -4,7 +4,11 @@
 Created on Sun Dec 24 18:14:01 2023
 
 """
-
+"""
+Goals: - write an Autoencoder 8 x 3 x 8 units and apply to image compression
+       - apply and test Hopfield network capacity
+       - emply different dimensionality reduction techniques
+"""
 import numpy as np
 import random
 import matplotlib.pyplot as plt
