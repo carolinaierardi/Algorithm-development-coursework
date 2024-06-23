@@ -11,6 +11,12 @@ knitr::opts_chunk$set(echo = FALSE, include = TRUE, cache = TRUE,
 
 ```
 
+```
+#Goal: Produce a series of Wright-Fisher simulations with and without migration 
+# as well as genome sequence evolution algorithms (Felsenstein algorithm)
+#Note: no specific R libraries were used for the algorithms
+```
+
 ```{r Library installation}
 library(ggplot2)
 library(tidyverse)
